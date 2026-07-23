@@ -31,6 +31,13 @@ def _cors_headers(origin: str) -> dict:
         "Access-Control-Allow-Origin": origin,
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
         "Access-Control-Allow-Headers": "Content-Type, Authorization",
+        # Требуется браузерами Chromium (Private Network Access), когда страница
+        # с "публичного" origin (например, i2p b32-адрес) обращается к серверу на
+        # приватном/loopback-адресе (127.0.0.1). Без этого заголовка preflight
+        # OPTIONS не проходит, и fetch() падает с NetworkError ещё до реального
+        # запроса — именно это и происходит на выложенном сайте, но не на localhost,
+        # где origin сам по себе считается локальным и PNA-проверка не включается.
+        "Access-Control-Allow-Private-Network": "true",
     }
 
 

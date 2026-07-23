@@ -15,7 +15,7 @@
             let token = localStorage.getItem("itubep_bridge_token");
             if (token) return token;
 
-            await fetch(`${BRIDGE_URL}/bridge/pair/request`, { method: "POST", mode: "no-cors" });
+            await fetch(`${BRIDGE_URL}/bridge/pair/request`, { method: "POST" });
 
             const code = prompt("Введите код подтверждения из окна ITubeP Bridge:");
             if (!code) throw new Error("Код не введён");
