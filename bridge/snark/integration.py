@@ -66,9 +66,35 @@ class SnarkIntegration:
         # storage_dir_provider — функция без аргументов, возвращающая путь к
         # storage-директории i2psnark (нужна publisher.py). Задаётся снаружи,
         # т.к. SnarkIntegration сама по себе не хранит настройки моста.
+        # Дефолт ниже — ТОЛЬКО fallback на случай явного создания
+        # SnarkIntegration без provider (тесты и т.п.); реальный путь всегда
+        # должен приходить из PolicyStorage.get_snark_storage_dir(), который
+        # согласован с install.sh (WORKDIR/i2psnark-run/i2psnark).
         self.storage_dir_provider = storage_dir_provider or (
-            lambda: os.path.expanduser("~/i2psnark-run/i2psnark")
+            lambda: os.path.expanduser("~/.local/share/itubep-bridge/i2psnark-run/i2psnark")
         )
+
+    def get_real_storage_dir(self) -> str:
+        """
+        Спрашивает у РЕАЛЬНО запущенного i2psnark его фактическую директорию
+        загрузок через session-get (поле "download-dir" стандартного
+        Transmission RPC) — вместо того, чтобы полагаться на путь, который
+        мост САМ ПРЕДПОЛАГАЕТ (storage_dir_provider/настройка
+        snark_storage_dir). Дважды подряд оказывалось, что предположение не
+        совпадает с реальностью (то дефолт вообще не там, куда кладёт
+        install.sh, то download-dir-аргумент у torrent-add, судя по всему,
+        просто не поддерживается этим RPC-плагином и молча игнорируется) —
+        поэтому единственный надёжный источник истины это сам i2psnark.
+        """
+        session = self.rpc.session_get(fields=["download-dir"])
+        real_dir = session.get("download-dir")
+        if not real_dir:
+            log.warning(
+                "session-get не вернул download-dir — использую "
+                "storage_dir_provider() как fallback (менее надёжно)"
+            )
+            return self.storage_dir_provider()
+        return real_dir
 
     # --- Публикация (издатель) ---
     #
@@ -276,5 +302,5 @@ class SnarkIntegration:
         return True
 
     def get_segment_path(self, torrent_name: str, file_index: int) -> Path:
-        storage_dir = Path(self.storage_dir_provider()) / torrent_name
+        storage_dir = Path(self.get_real_storage_dir()) / torrent_name
         return storage_dir / f"segment_{file_index:04d}.ts"

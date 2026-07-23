@@ -314,7 +314,13 @@ class PolicyStorage:
 
     def get_snark_storage_dir(self) -> str:
         import os
-        default = os.path.expanduser("~/i2psnark-run/i2psnark")
+        # ВАЖНО: должно совпадать с тем, что реально создаёт install.sh —
+        # WORKDIR=~/.local/share/itubep-bridge, SNARK_RUN_DIR=WORKDIR/i2psnark-run,
+        # i2psnark запускается с WorkingDirectory=SNARK_RUN_DIR и хранит свои
+        # данные в подпапке "i2psnark" ОТНОСИТЕЛЬНО этой рабочей директории —
+        # то есть реальный путь: SNARK_RUN_DIR/i2psnark, а никак не что-то
+        # напрямую в $HOME (там install.sh вообще ничего не создаёт).
+        default = os.path.expanduser("~/.local/share/itubep-bridge/i2psnark-run/i2psnark")
         return self.get_setting("snark_storage_dir", default)
 
     def set_snark_storage_dir(self, path: str):

@@ -63,6 +63,18 @@ class RPCClient:
 
     # --- Высокоуровневые обёртки ---
 
+    def session_get(self, fields: list[str] | None = None) -> dict:
+        """
+        session-get — подтверждённо рабочий базовый метод (см. заголовок
+        файла). Возвращает текущие настройки сессии i2psnark, включая
+        "download-dir" — РЕАЛЬНУЮ, фактически настроенную директорию
+        загрузок, а не то, что мост о ней ПРЕДПОЛАГАЕТ (см.
+        SnarkIntegration.get_real_storage_dir — там же объяснение, почему
+        стоит спрашивать это у i2psnark напрямую, а не хардкодить путь).
+        """
+        result = self.call("session-get", {"fields": fields} if fields else {})
+        return result.get("arguments", {})
+
     def torrent_get(self, ids: list[int] | None = None, fields: list[str] | None = None) -> list[dict]:
         fields = fields or [
             "id", "name", "status", "percentDone",
@@ -75,16 +87,34 @@ class RPCClient:
         result = self.call("torrent-get", args)
         return result.get("arguments", {}).get("torrents", [])
 
-    def torrent_add_file(self, torrent_path: str, paused: bool = False) -> dict:
+    def torrent_add_file(self, torrent_path: str, paused: bool = False, download_dir: str | None = None) -> dict:
         with open(torrent_path, "rb") as f:
             metainfo_b64 = base64.b64encode(f.read()).decode("ascii")
-        result = self.call("torrent-add", {"metainfo": metainfo_b64, "paused": paused})
+        args = {"metainfo": metainfo_b64, "paused": paused}
+        if download_dir is not None:
+            args["download-dir"] = download_dir
+        result = self.call("torrent-add", args)
         return result.get("arguments", {}).get("torrent-added") \
             or result.get("arguments", {}).get("torrent-duplicate")
 
-    def torrent_add_bytes(self, torrent_bytes: bytes, paused: bool = False) -> dict:
+    def torrent_add_bytes(self, torrent_bytes: bytes, paused: bool = False, download_dir: str | None = None) -> dict:
+        """
+        download_dir — ЯВНО указать i2psnark, куда класть/искать данные этого
+        конкретного торрента (родительская директория, БЕЗ добавления имени
+        торрента — i2psnark сам создаёт поддиректорию <download_dir>/<name>/
+        для multi-file торрента). КРИТИЧНО передавать при публикации: без
+        этого i2psnark использует СВОЮ собственную глобально настроенную (в
+        его же веб-интерфейсе) директорию загрузок, которая может не
+        совпадать с тем, куда мост реально скопировал уже готовые сегменты
+        (см. publisher.py) — тогда верификация не находит файлы на месте и
+        торрент считается пустым/недокачанным, хотя данные физически лежат
+        на диске просто в другом месте.
+        """
         metainfo_b64 = base64.b64encode(torrent_bytes).decode("ascii")
-        result = self.call("torrent-add", {"metainfo": metainfo_b64, "paused": paused})
+        args = {"metainfo": metainfo_b64, "paused": paused}
+        if download_dir is not None:
+            args["download-dir"] = download_dir
+        result = self.call("torrent-add", args)
         return result.get("arguments", {}).get("torrent-added") \
             or result.get("arguments", {}).get("torrent-duplicate")
 
@@ -105,6 +135,31 @@ class RPCClient:
             "ids": [torrent_id],
             "delete-local-data": delete_local_data,
         })
+
+    def wait_for_verification(
+        self, torrent_id: int, timeout_seconds: float = 30.0,
+    ) -> dict | None:
+        """
+        Ждёт, пока torrent-verify реально завершится — то есть статус выйдет
+        из "check-wait"(1)/"checking"(2). ВАЖНО: не ждём статус "seeding"(6) —
+        для paused-торрента (как при публикации) он попросту недостижим без
+        отдельного torrent-start, верификация на паузе останавливается на
+        status=0 с уже корректным percentDone. Возвращает последний известный
+        torrent-dict (с percentDone) или None по таймауту.
+        """
+        import time
+        CHECKING_STATUSES = {1, 2}
+        deadline = time.monotonic() + timeout_seconds
+        last = None
+        while time.monotonic() < deadline:
+            torrents = self.torrent_get(ids=[torrent_id], fields=["id", "status", "percentDone"])
+            if not torrents:
+                return None
+            last = torrents[0]
+            if last.get("status") not in CHECKING_STATUSES:
+                return last
+            time.sleep(0.5)
+        return last
 
     def wait_for_status(self, torrent_id: int, target_status: int, timeout_seconds: float = 10.0) -> bool:
         """

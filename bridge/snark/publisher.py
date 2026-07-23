@@ -11,6 +11,7 @@ torrent_name вычисляется из содержимого сегменто
 
 from __future__ import annotations
 
+import logging
 import subprocess
 import time
 import hashlib
@@ -24,6 +25,8 @@ from .torrent_builder import TorrentFile, build_torrent_with_hash
 from .integration import SnarkIntegration
 from policy.crypto_utils import ChannelIdentity, canonical_json_for_id
 from .integration import VideoTorrentHandle
+
+log = logging.getLogger(__name__)
 
 
 class PublishError(Exception):
@@ -179,18 +182,45 @@ class VideoPublisher:
         # ПОД ТЕМ ЖЕ ИМЕНЕМ, что и торрент — иначе i2psnark будет пытаться
         # СКАЧАТЬ данные, которые у автора уже есть локально, и раздача
         # никогда не начнётся (0% докачано, нет других сидов)
-        storage_dir = Path(self.snark.storage_dir_provider()) / torrent_name
+        # Спрашиваем у РЕАЛЬНО запущенного i2psnark, куда он на самом деле
+        # кладёт данные (session-get), а не полагаемся на путь, который мост
+        # сам предполагает — см. SnarkIntegration.get_real_storage_dir.
+        storage_root = Path(self.snark.get_real_storage_dir())
+        storage_dir = storage_root / torrent_name
         storage_dir.mkdir(parents=True, exist_ok=True)
         for seg in segments:
             shutil.copy2(seg, storage_dir / seg.name)
 
+        # download-dir как аргумент torrent-add, судя по всему, этим
+        # RPC-плагином не поддерживается (в списке "advanced features" —
+        # см. README плагина) и молча игнорируется, поэтому больше на него
+        # не полагаемся — данные и так лежат там, где i2psnark их и ждёт.
         added = self.snark.rpc.torrent_add_bytes(torrent_bytes, paused=True)
         torrent_id = added["id"]
 
         # Просим i2psnark проверить хеши уже лежащих на месте файлов — это
-        # переведёт торрент из "нужно скачать" в "уже скачано, можно раздавать"
+        # переведёт торрент из "нужно скачать" в "уже скачано, можно раздавать".
+        # ВАЖНО: торрент добавлен с paused=True, поэтому статус "seeding"(6)
+        # для него недостижим без отдельного torrent-start — ждём не его, а
+        # окончания самой проверки (см. RPCClient.wait_for_verification).
+        total_bytes = sum(f.path.stat().st_size for f in torrent_files)
+        verify_timeout = max(30.0, total_bytes / (5 * 1024 * 1024))  # ~5 МБ/с как нижняя граница скорости хеширования
+
         self.snark.rpc.torrent_verify(torrent_id)
-        self.snark.rpc.wait_for_status(torrent_id, target_status=6, timeout_seconds=30.0)  # 6 = seeding
+        final = self.snark.rpc.wait_for_verification(torrent_id, timeout_seconds=verify_timeout)
+        if final is None:
+            raise PublishError(
+                f"Торрент {torrent_id} не завершил верификацию за "
+                f"{verify_timeout:.0f}с (не удалось получить статус от i2psnark)"
+            )
+        if final.get("percentDone", 0) < 1.0:
+            raise PublishError(
+                f"Торрент {torrent_id}: после верификации percentDone="
+                f"{final.get('percentDone')} — локальные файлы в "
+                f"storage-директории не совпадают с только что собранным "
+                f".torrent (проверьте storage_dir_provider/копирование сегментов)"
+            )
+        log.info("Торрент %s верифицирован (100%%), запускаю раздачу", torrent_id)
 
         # enableInOrder НЕ нужен раздающей стороне — эта настройка управляет
         # порядком ДОКАЧКИ, а у автора уже всё скачано (100%, seeding). Форма
@@ -215,7 +245,12 @@ class VideoPublisher:
         if resp.status_code != 200:
             raise PublishError(f"Сайт отклонил публикацию: {resp.status_code} {resp.text}")
 
-        return {"video_id": video_id, "torrent_id": torrent_id, "site_response": resp.json()}
+        return {
+            "video_id": video_id,
+            "torrent_id": torrent_id,
+            "torrent_name": torrent_name,
+            "site_response": resp.json(),
+        }
 
     def _ensure_channel_registered(self, site_base_url: str) -> None:
         channel_record = {
