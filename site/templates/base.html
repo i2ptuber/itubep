@@ -1,0 +1,21 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="UTF-8">
+    <title>{% block title %}ITubeP{% endblock %}</title>
+    <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+    <header>
+        <a href="/" class="logo">ITubeP</a>
+        <a href="/publish" class="publish-link">Опубликовать</a>
+        <form action="/" method="get" class="search-form">
+            <input type="text" name="q" placeholder="Поиск..." value="{{ query|default('') }}">
+            <button type="submit">Найти</button>
+        </form>
+    </header>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

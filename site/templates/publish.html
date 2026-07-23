@@ -1,0 +1,60 @@
+{% extends "base.html" %}
+{% block title %}Опубликовать видео — ITubeP{% endblock %}
+{% block content %}
+    <h1>Опубликовать видео</h1>
+    <p>Публикация выполняется через локальный ITubeP Bridge — откроется несколько
+       окон: подтверждение, выбор файла, название и описание.</p>
+
+    <button id="publish-btn">Опубликовать видео</button>
+    <div id="publish-status"></div>
+
+    <script>
+        const BRIDGE_URL = "http://127.0.0.1:9080";
+
+        async function getOrCreateToken() {
+            let token = localStorage.getItem("itubep_bridge_token");
+            if (token) return token;
+
+            await fetch(`${BRIDGE_URL}/bridge/pair/request`, { method: "POST", mode: "no-cors" });
+
+            const code = prompt("Введите код подтверждения из окна ITubeP Bridge:");
+            if (!code) throw new Error("Код не введён");
+
+            const resp = await fetch(`${BRIDGE_URL}/bridge/pair/confirm`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({ code }),
+            });
+            if (!resp.ok) throw new Error("Неверный код или отклонено на мосте");
+
+            const data = await resp.json();
+            localStorage.setItem("itubep_bridge_token", data.token);
+            return data.token;
+        }
+
+        document.getElementById("publish-btn").addEventListener("click", async () => {
+            const statusEl = document.getElementById("publish-status");
+            statusEl.textContent = "Сопряжение с мостом...";
+
+            try {
+                const token = await getOrCreateToken();
+                statusEl.textContent = "Запущен мастер публикации — переключитесь на окна ITubeP Bridge...";
+
+                const resp = await fetch(`${BRIDGE_URL}/bridge/publish`, {
+                    method: "POST",
+                    headers: { "Authorization": `Bearer ${token}` },
+                });
+
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.error || "Неизвестная ошибка публикации");
+                }
+
+                const data = await resp.json();
+                statusEl.innerHTML = `Опубликовано! <a href="/video/${data.video_id}">Открыть видео</a>`;
+            } catch (e) {
+                statusEl.textContent = "Ошибка: " + e.message;
+            }
+        });
+    </script>
+{% endblock %}

@@ -1,0 +1,41 @@
+{% extends "base.html" %}
+{% block title %}{{ video.title }} — ITubeP{% endblock %}
+{% block content %}
+    <h1>{{ video.title }}</h1>
+    <p><a href="/channel/{{ video.channel_id }}">{{ channel_display_name }}</a></p>
+
+    <!-- Плеер: рендерится только если JS включён и мост доступен -->
+    <div id="player-container" style="display:none;">
+        <video id="video-player" controls width="100%"></video>
+        <div id="player-status"></div>
+    </div>
+
+    <!-- No-JS fallback: всегда в разметке, скрывается через JS если плеер заработал -->
+    <div id="nojs-fallback">
+        <p>Для просмотра прямо на сайте нужен JavaScript и установленный
+           <a href="/download-bridge">ITubeP Bridge</a>.</p>
+        <p>Либо скачайте торрент-файл и смотрите локально любым BitTorrent-клиентом
+           с поддержкой I2P:</p>
+        <ul>
+            {% for q in video.qualities %}
+            <li>
+                <a href="/api/video/{{ video.video_id }}/chunk/{{ q.label }}.torrent">
+                    Скачать {{ q.label }} (.torrent)
+                </a>
+            </li>
+            {% endfor %}
+        </ul>
+    </div>
+
+    <p class="description">{{ video.description }}</p>
+
+    <script>
+        window.ITUBEP_VIDEO = {
+            video_id: "{{ video.video_id }}",
+            qualities: {{ video.qualities|tojson }},
+            site_origin: window.location.origin
+        };
+    </script>
+    <script src="https://cdnjs.cloudflare.com/ajax/libs/hls.js/1.5.15/hls.min.js"></script>
+    <script src="/static/player.js"></script>
+{% endblock %}

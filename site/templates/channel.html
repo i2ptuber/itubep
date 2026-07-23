@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ channel.display_name }} — ITubeP{% endblock %}
+{% block content %}
+    <h1>{{ channel.display_name }}</h1>
+    <p class="channel-id">{{ channel.channel_id }}</p>
+
+    <div class="video-grid">
+        {% for v in videos %}
+        <a class="video-card" href="/video/{{ v.video_id }}">
+            <div class="video-thumb-placeholder"></div>
+            <div class="video-title">{{ v.title }}</div>
+            <div class="video-meta">{{ v.duration_seconds }} сек · {{ v.view_count }} просмотров</div>
+        </a>
+        {% endfor %}
+    </div>
+{% endblock %}

@@ -1,0 +1,19 @@
+{% extends "base.html" %}
+{% block title %}{{ query or "Главная" }} — ITubeP{% endblock %}
+{% block content %}
+    {% if results %}
+        <div class="video-grid">
+            {% for v in results %}
+            <a class="video-card" href="/video/{{ v.video_id }}">
+                <div class="video-thumb-placeholder"></div>
+                <div class="video-title">{{ v.title }}</div>
+                <div class="video-meta">{{ v.channel_display_name }} · {{ v.duration_seconds }} сек</div>
+            </a>
+            {% endfor %}
+        </div>
+    {% elif query %}
+        <p class="empty-state">Ничего не найдено по запросу «{{ query }}»</p>
+    {% else %}
+        <p class="empty-state">Введите запрос для поиска видео</p>
+    {% endif %}
+{% endblock %}
