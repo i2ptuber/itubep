@@ -13,9 +13,32 @@
             <input type="text" name="q" placeholder="Поиск..." value="{{ query|default('') }}">
             <button type="submit">Найти</button>
         </form>
+
+        <div class="account-menu">
+            <button type="button" class="account-btn" id="account-btn" aria-haspopup="true" aria-expanded="false" title="Аккаунт">
+                <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
+                    <circle cx="12" cy="8" r="4"/>
+                    <path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7"/>
+                </svg>
+            </button>
+            <div class="account-dropdown" id="account-dropdown" role="menu">
+                <a href="/channel/me" role="menuitem">Мой канал</a>
+                <!-- TODO: студия управления каналом (доступ к видео, название/аватар/описание, закреплённое видео) -->
+                <a href="/studio" role="menuitem">Управление каналом</a>
+                <!-- TODO: менеджер каналов — реализуется на стороне моста, отдельная большая задача -->
+                <a href="/channels" role="menuitem">Менеджер каналов</a>
+                <div class="menu-divider"></div>
+                <!-- TODO: открывает настройки моста через локальный запрос;
+                     мост обязан проверять, что запрос пришёл от авторизованного
+                     (сопряжённого) origin, и молча игнорировать иначе -->
+                <button type="button" class="menu-item-btn" id="open-bridge-settings" role="menuitem">Настройки</button>
+                <a href="/about" role="menuitem">Контакты и исходный код</a>
+            </div>
+        </div>
     </header>
     <main>
         {% block content %}{% endblock %}
     </main>
+    <script src="/static/account-menu.js"></script>
 </body>
 </html>
