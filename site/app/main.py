@@ -9,7 +9,7 @@ import json
 from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import FastAPI, HTTPException, Request, Depends, UploadFile, File, Form
-from fastapi.responses import HTMLResponse
+from fastapi.responses import HTMLResponse, RedirectResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
@@ -18,6 +18,7 @@ from .models import Channel, Video, VideoChunk, RateLimitConfig
 from .schemas import ChannelRegisterRequest, ChannelResponse, SearchResultItem, SearchResponse, VideoListItem, ChannelVideosResponse
 from .crypto import verify_channel_record, verify_video_manifest
 from .rate_limit import enforce
+from .i18n import get_language, get_translator, get_strings, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE, COOKIE_NAME
 
 app = FastAPI(title="ITubeP")
 templates = Jinja2Templates(directory="templates")
@@ -300,6 +301,31 @@ async def get_channel_videos(
         ],
     )
 
+def _i18n_ctx(request: Request) -> dict:
+    """Общие переменные локализации сайта для каждого шаблона: t() —
+    функция перевода, lang — текущий язык, для переключателя в шапке."""
+    return {
+        "t": get_translator(request),
+        "lang": get_language(request),
+        "js_strings": get_strings(request),
+    }
+
+
+@app.get("/set-lang")
+async def set_lang(request: Request, lang: str, next: str = "/"):
+    """
+    Переключение языка САЙТА (независимо от языка моста — см.
+    app/i18n.py). Хранится в cookie конкретного браузера, а не в БД —
+    сайт не привязывает выбор языка к конкретному пользователю/сессии,
+    просто к устройству/браузеру, с которого зашли.
+    """
+    if lang not in SUPPORTED_LANGUAGES:
+        lang = DEFAULT_LANGUAGE
+    response = RedirectResponse(url=next or "/")
+    response.set_cookie(COOKIE_NAME, lang, max_age=60 * 60 * 24 * 365, samesite="lax")
+    return response
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home_page(request: Request, q: str = "", session: AsyncSession = Depends(get_session)):
     results = []
@@ -325,7 +351,7 @@ async def home_page(request: Request, q: str = "", session: AsyncSession = Depen
         results = result.fetchall()
 
     return templates.TemplateResponse(
-        request, "search.html", {"query": q, "results": results},
+        request, "search.html", {"query": q, "results": results, **_i18n_ctx(request)},
     )
 
 
@@ -347,7 +373,7 @@ async def channel_page(
     videos = result.scalars().all()
 
     return templates.TemplateResponse(
-        request, "channel.html", {"channel": channel, "videos": videos},
+        request, "channel.html", {"channel": channel, "videos": videos, **_i18n_ctx(request)},
     )
 
 
@@ -378,12 +404,13 @@ async def video_page(
                 "qualities": manifest.get("qualities", []),
             },
             "channel_display_name": channel.display_name if channel else "Unknown",
+            **_i18n_ctx(request),
         },
     )
 
 @app.get("/publish", response_class=HTMLResponse)
 async def publish_page(request: Request):
-    return templates.TemplateResponse(request, "publish.html", {})
+    return templates.TemplateResponse(request, "publish.html", _i18n_ctx(request))
 
 # Модерация (remove video / ban channel) намеренно НЕ выставлена через HTTP —
 # см. scripts/moderate.py: локальный CLI-скрипт, работающий напрямую с БД на

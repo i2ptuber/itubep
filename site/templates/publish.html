@@ -1,11 +1,10 @@
 {% extends "base.html" %}
-{% block title %}Опубликовать видео — ITubeP{% endblock %}
+{% block title %}{{ t('publish.title') }} — ITubeP{% endblock %}
 {% block content %}
-    <h1>Опубликовать видео</h1>
-    <p>Публикация выполняется через локальный ITubeP Bridge — откроется несколько
-       окон: подтверждение, выбор файла, название и описание.</p>
+    <h1>{{ t('publish.title') }}</h1>
+    <p>{{ t('publish.description') }}</p>
 
-    <button id="publish-btn">Опубликовать видео</button>
+    <button id="publish-btn">{{ t('publish.button') }}</button>
     <div id="publish-status"></div>
 
     <script>
@@ -17,15 +16,15 @@
 
             await fetch(`${BRIDGE_URL}/bridge/pair/request`, { method: "POST", mode: "no-cors" });
 
-            const code = prompt("Введите код подтверждения из окна ITubeP Bridge:");
-            if (!code) throw new Error("Код не введён");
+            const code = prompt(window.t("publish.enter_code_prompt"));
+            if (!code) throw new Error(window.t("publish.error_no_code"));
 
             const resp = await fetch(`${BRIDGE_URL}/bridge/pair/confirm`, {
                 method: "POST",
                 headers: { "Content-Type": "application/json" },
                 body: JSON.stringify({ code }),
             });
-            if (!resp.ok) throw new Error("Неверный код или отклонено на мосте");
+            if (!resp.ok) throw new Error(window.t("publish.error_bad_code"));
 
             const data = await resp.json();
             localStorage.setItem("itubep_bridge_token", data.token);
@@ -34,11 +33,11 @@
 
         document.getElementById("publish-btn").addEventListener("click", async () => {
             const statusEl = document.getElementById("publish-status");
-            statusEl.textContent = "Сопряжение с мостом...";
+            statusEl.textContent = window.t("publish.status_pairing");
 
             try {
                 const token = await getOrCreateToken();
-                statusEl.textContent = "Запущен мастер публикации — переключитесь на окна ITubeP Bridge...";
+                statusEl.textContent = window.t("publish.status_wizard");
 
                 const resp = await fetch(`${BRIDGE_URL}/bridge/publish`, {
                     method: "POST",
@@ -47,13 +46,14 @@
 
                 if (!resp.ok) {
                     const err = await resp.json();
-                    throw new Error(err.error || "Неизвестная ошибка публикации");
+                    throw new Error(err.error || window.t("publish.error_unknown"));
                 }
 
                 const data = await resp.json();
-                statusEl.innerHTML = `Опубликовано! <a href="/video/${data.video_id}">Открыть видео</a>`;
+                statusEl.innerHTML = window.t("publish.status_published") +
+                    `<a href="/video/${data.video_id}">${window.t("publish.open_video")}</a>`;
             } catch (e) {
-                statusEl.textContent = "Ошибка: " + e.message;
+                statusEl.textContent = window.t("publish.status_error") + e.message;
             }
         });
     </script>

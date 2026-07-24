@@ -14,6 +14,7 @@ import asyncio
 from aiohttp import web
 
 from policy.authz import BridgePolicy, PermissionDenied
+from i18n import t
 
 BRIDGE_HOST = "127.0.0.1"
 BRIDGE_PORT = 9080
@@ -221,9 +222,9 @@ def create_app(policy: BridgePolicy) -> web.Application:
 def run():
     from ui.tkinter_dialog import TkinterPairingDialog
     policy = BridgePolicy(dialog=TkinterPairingDialog())
-    print("Возобновляю раздачу ранее добавленных торрентов...")
+    print(t("server.resuming_torrents"))
     policy.resume_all_owned_torrents()
-    print("Готово.")
+    print(t("server.resuming_done"))
     app = create_app(policy)
     web.run_app(app, host=BRIDGE_HOST, port=BRIDGE_PORT)
 

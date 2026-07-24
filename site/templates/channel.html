@@ -9,7 +9,7 @@
         <a class="video-card" href="/video/{{ v.video_id }}">
             <div class="video-thumb-placeholder"></div>
             <div class="video-title">{{ v.title }}</div>
-            <div class="video-meta">{{ v.duration_seconds }} сек · {{ v.download_count }} скачиваний</div>
+            <div class="video-meta">{{ v.duration_seconds }} {{ t('search.sec') }} · {{ v.download_count }} {{ t('channel.downloads') }}</div>
         </a>
         {% endfor %}
     </div>

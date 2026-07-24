@@ -45,6 +45,9 @@ import sys
 import tempfile
 from pathlib import Path
 
+sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
+from i18n import t
+
 SEGMENT_RE = re.compile(r"^segment_(\d{4,})\.ts$")
 
 
@@ -70,7 +73,7 @@ def default_storage_dir() -> Path:
 
 def find_segments(torrent_dir: Path) -> list[tuple[int, Path]]:
     if not torrent_dir.is_dir():
-        raise AssembleError(f"Директория не найдена: {torrent_dir}")
+        raise AssembleError(t("assemble.dir_not_found", dir=torrent_dir))
 
     found: list[tuple[int, Path]] = []
     for p in torrent_dir.iterdir():
@@ -79,10 +82,7 @@ def find_segments(torrent_dir: Path) -> list[tuple[int, Path]]:
             found.append((int(m.group(1)), p))
 
     if not found:
-        raise AssembleError(
-            f"В {torrent_dir} не найдено файлов вида segment_NNNN.ts — "
-            f"это точно директория докачанного видео-торрента?"
-        )
+        raise AssembleError(t("assemble.no_segments", dir=torrent_dir))
 
     found.sort(key=lambda t: t[0])
     return found
@@ -100,16 +100,12 @@ def check_gaps(segments: list[tuple[int, Path]], allow_partial: bool) -> list[tu
     expected = segments[0][0]
     for idx, path in segments:
         if idx != expected:
-            msg = (
-                f"Пропуск в последовательности сегментов: ожидался индекс "
-                f"{expected}, найден {idx}. Торрент докачан не полностью — "
-                f"будет собрано только {len(usable)} сегмент(ов) до пропуска."
-            )
+            msg = t("assemble.gap_msg", expected=expected, found=idx, usable=len(usable))
             if allow_partial:
                 print(f"[!] {msg}", file=sys.stderr)
                 break
             else:
-                raise AssembleError(msg + " Используйте --allow-partial, если это ожидаемо.")
+                raise AssembleError(msg + t("assemble.gap_hint"))
         usable.append((idx, path))
         expected += 1
     return usable
@@ -127,9 +123,9 @@ def assemble(
     usable = check_gaps(segments, allow_partial)
 
     if not usable:
-        raise AssembleError("Нет ни одного пригодного для сборки сегмента (пропуск на самом первом).")
+        raise AssembleError(t("assemble.no_usable_segments"))
 
-    print(f"Собираю {len(usable)} из {len(segments)} докачанных сегментов...")
+    print(t("assemble.assembling", usable=len(usable), total=len(segments)))
 
     output = output or torrent_dir.with_suffix(".mp4")
     output.parent.mkdir(parents=True, exist_ok=True)
@@ -153,7 +149,7 @@ def assemble(
             ]
             result = subprocess.run(cmd, capture_output=True, text=True)
             if result.returncode != 0:
-                raise AssembleError(f"ffmpeg завершился с ошибкой:\n{result.stderr[-3000:]}")
+                raise AssembleError(t("assemble.ffmpeg_error", stderr=result.stderr[-3000:]))
         finally:
             list_path.unlink(missing_ok=True)
     else:
@@ -161,7 +157,7 @@ def assemble(
         # спроектирован быть конкатенируемым побайтово; большинство плееров
         # типа VLC/mpv проглотят это нормально, но таймстампы не
         # пересчитываются, возможны мелкие артефакты на стыках сегментов)
-        print("[!] ffmpeg не найден в PATH — делаю сырую конкатенацию .ts (менее надёжно)", file=sys.stderr)
+        print("[!] " + t("assemble.no_ffmpeg"), file=sys.stderr)
         if output.suffix != ".ts":
             output = output.with_suffix(".ts")
         with open(output, "wb") as out_f:
@@ -177,17 +173,17 @@ def assemble(
 
 def main():
     parser = argparse.ArgumentParser(
-        description="Собрать докачанные HLS-сегменты в один видеофайл (для просмотра без плеера сайта/JS).",
+        description=t("assemble.arg_description"),
     )
-    parser.add_argument("torrent_name", help="Имя торрента (папка с сегментами в storage-директории i2psnark)")
+    parser.add_argument("torrent_name", help=t("assemble.arg_torrent_name"))
     parser.add_argument("--storage-dir", type=Path, default=None,
-                         help="Storage-директория i2psnark (по умолчанию берётся из настроек моста)")
+                         help=t("assemble.arg_storage_dir"))
     parser.add_argument("--output", type=Path, default=None,
-                         help="Путь к результату (по умолчанию <storage-dir>/<torrent_name>.mp4)")
+                         help=t("assemble.arg_output"))
     parser.add_argument("--allow-partial", action="store_true",
-                         help="Не падать с ошибкой, если торрент докачан не полностью — собрать что есть")
+                         help=t("assemble.arg_allow_partial"))
     parser.add_argument("--keep-ts", action="store_true",
-                         help="(зарезервировано) ничего не удаляет — исходные сегменты не трогаются в любом случае")
+                         help=t("assemble.arg_keep_ts"))
     args = parser.parse_args()
 
     storage_dir = args.storage_dir or default_storage_dir()
@@ -197,10 +193,10 @@ def main():
             args.torrent_name, storage_dir, args.output, args.allow_partial, args.keep_ts,
         )
     except AssembleError as e:
-        print(f"Ошибка: {e}", file=sys.stderr)
+        print(t("assemble.error_prefix", error=e), file=sys.stderr)
         sys.exit(1)
 
-    print(f"Готово: {output}")
+    print(t("assemble.done", output=output))
 
 
 if __name__ == "__main__":

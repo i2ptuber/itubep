@@ -15,9 +15,15 @@ main { padding: 30px; max-width: 1100px; margin: 0 auto; }
 #nojs-fallback { background: #1a1a1a; padding: 20px; border-radius: 8px; margin: 20px 0; }
 .description { white-space: pre-wrap; color: #ccc; }
 .publish-link { color: #ff9800; text-decoration: none; }
+.lang-switch {
+    margin-left: auto; color: #ccc; text-decoration: none;
+    font-size: 0.9em; padding: 6px 10px; border-radius: 4px;
+    border: 1px solid #444;
+}
+.lang-switch:hover { color: #ff9800; border-color: #ff9800; }
 
 /* --- Меню аккаунта (кружочек в правом верхнем углу) --- */
-.account-menu { position: relative; margin-left: auto; }
+.account-menu { position: relative; }
 .account-btn {
     width: 36px; height: 36px; border-radius: 50%;
     background: #333; border: none; color: #ccc;

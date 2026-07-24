@@ -1,5 +1,5 @@
 {% extends "base.html" %}
-{% block title %}{{ query or "Главная" }} — ITubeP{% endblock %}
+{% block title %}{{ query or t('search.home_title') }} — ITubeP{% endblock %}
 {% block content %}
     {% if results %}
         <div class="video-grid">
@@ -7,13 +7,13 @@
             <a class="video-card" href="/video/{{ v.video_id }}">
                 <div class="video-thumb-placeholder"></div>
                 <div class="video-title">{{ v.title }}</div>
-                <div class="video-meta">{{ v.channel_display_name }} · {{ v.duration_seconds }} сек</div>
+                <div class="video-meta">{{ v.channel_display_name }} · {{ v.duration_seconds }} {{ t('search.sec') }}</div>
             </a>
             {% endfor %}
         </div>
     {% elif query %}
-        <p class="empty-state">Ничего не найдено по запросу «{{ query }}»</p>
+        <p class="empty-state">{{ t('search.nothing_found').format(query=query) }}</p>
     {% else %}
-        <p class="empty-state">Введите запрос для поиска видео</p>
+        <p class="empty-state">{{ t('search.enter_query') }}</p>
     {% endif %}
 {% endblock %}

@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html lang="{{ lang|default('en') }}">
 <head>
     <meta charset="UTF-8">
     <title>{% block title %}ITubeP{% endblock %}</title>
@@ -8,37 +8,51 @@
 <body>
     <header>
         <a href="/" class="logo">ITubeP</a>
-        <a href="/publish" class="publish-link">Опубликовать</a>
+        <a href="/publish" class="publish-link">{{ t('nav.publish') }}</a>
         <form action="/" method="get" class="search-form">
-            <input type="text" name="q" placeholder="Поиск..." value="{{ query|default('') }}">
-            <button type="submit">Найти</button>
+            <input type="text" name="q" placeholder="{{ t('nav.search_placeholder') }}" value="{{ query|default('') }}">
+            <button type="submit">{{ t('nav.search_btn') }}</button>
         </form>
 
+        <!-- Переключатель языка САЙТА — независим от языка моста (тот
+             настраивается в настройках моста). Хранится в cookie этого
+             браузера, см. app/i18n.py и роут /set-lang в app/main.py. -->
+        <a class="lang-switch" href="/set-lang?lang={{ 'ru' if lang == 'en' else 'en' }}&next={{ request.url.path }}{% if request.url.query %}%3F{{ request.url.query|urlencode }}{% endif %}">
+            {{ t('lang.switch_to') }}
+        </a>
+
         <div class="account-menu">
-            <button type="button" class="account-btn" id="account-btn" aria-haspopup="true" aria-expanded="false" title="Аккаунт">
+            <button type="button" class="account-btn" id="account-btn" aria-haspopup="true" aria-expanded="false" title="{{ t('nav.account_title') }}">
                 <svg viewBox="0 0 24 24" width="22" height="22" fill="none" stroke="currentColor" stroke-width="2">
                     <circle cx="12" cy="8" r="4"/>
                     <path d="M4 20c0-4.4 3.6-7 8-7s8 2.6 8 7"/>
                 </svg>
             </button>
             <div class="account-dropdown" id="account-dropdown" role="menu">
-                <a href="/channel/me" role="menuitem">Мой канал</a>
+                <a href="/channel/me" role="menuitem">{{ t('nav.my_channel') }}</a>
                 <!-- TODO: студия управления каналом (доступ к видео, название/аватар/описание, закреплённое видео) -->
-                <a href="/studio" role="menuitem">Управление каналом</a>
+                <a href="/studio" role="menuitem">{{ t('nav.manage_channel') }}</a>
                 <!-- TODO: менеджер каналов — реализуется на стороне моста, отдельная большая задача -->
-                <a href="/channels" role="menuitem">Менеджер каналов</a>
+                <a href="/channels" role="menuitem">{{ t('nav.channel_manager') }}</a>
                 <div class="menu-divider"></div>
                 <!-- TODO: открывает настройки моста через локальный запрос;
                      мост обязан проверять, что запрос пришёл от авторизованного
-                     (сопряжённого) origin, и молча игнорировать иначе -->
-                <button type="button" class="menu-item-btn" id="open-bridge-settings" role="menuitem">Настройки</button>
-                <a href="/about" role="menuitem">Контакты и исходный код</a>
+                     (сопряжённого) origin, и молча игнорировать иначе.
+                     Язык, который увидит пользователь в окне настроек моста,
+                     определяется настройками САМОГО МОСТА (bridge/i18n.py),
+                     а не языком сайта — это две независимые настройки. -->
+                <button type="button" class="menu-item-btn" id="open-bridge-settings" role="menuitem">{{ t('nav.bridge_settings') }}</button>
+                <a href="/about" role="menuitem">{{ t('nav.about') }}</a>
             </div>
         </div>
     </header>
     <main>
         {% block content %}{% endblock %}
     </main>
+    <!-- Строки текущего языка сайта для клиентского JS (плеер, мастер
+         публикации) — см. static/i18n.js. Язык независим от языка моста. -->
+    <script>window.ITUBEP_STRINGS = {{ js_strings|tojson }};</script>
+    <script src="/static/i18n.js"></script>
     <script src="/static/account-menu.js"></script>
 </body>
 </html>

@@ -12,15 +12,14 @@
 
     <!-- No-JS fallback: всегда в разметке, скрывается через JS если плеер заработал -->
     <div id="nojs-fallback">
-        <p>Для просмотра прямо на сайте нужен JavaScript и установленный
-           <a href="/download-bridge">ITubeP Bridge</a>.</p>
-        <p>Либо скачайте торрент-файл и смотрите локально любым BitTorrent-клиентом
-           с поддержкой I2P:</p>
+        <p>{{ t('video.nojs_needs_js') }}
+           <a href="/download-bridge">{{ t('video.nojs_bridge_link') }}</a>.</p>
+        <p>{{ t('video.nojs_or_download') }}</p>
         <ul>
             {% for q in video.qualities %}
             <li>
                 <a href="/api/video/{{ video.video_id }}/chunk/{{ q.label }}.torrent">
-                    Скачать {{ q.label }} (.torrent)
+                    {{ t('video.download_quality').format(quality=q.label) }}
                 </a>
             </li>
             {% endfor %}

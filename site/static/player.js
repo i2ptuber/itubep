@@ -25,10 +25,10 @@ async function getOrCreateToken(forceNewPairing = false) {
         try {
             const pairData = await pairResp.json();
             if (pairData.status === "blocked") {
-                throw new Error("Этот сайт заблокирован в настройках моста — обратитесь к владельцу моста для разблокировки.");
+                throw new Error(window.t("player.error_blocked"));
             }
             if (pairData.status === "cooldown") {
-                throw new Error("Слишком частые попытки сопряжения — подождите немного и обновите страницу.");
+                throw new Error(window.t("player.error_cooldown"));
             }
         } catch (e) {
             if (e instanceof Error && e.message) throw e;
@@ -36,19 +36,15 @@ async function getOrCreateToken(forceNewPairing = false) {
         }
     }
 
-    const code = prompt(
-        "Введите код подтверждения из окна ITubeP Bridge.\n" +
-        "(окно моста могло появиться отдельно — переключитесь на него,\n" +
-        "если код ещё не сгенерирован, подождите пару секунд)"
-    );
-    if (!code) throw new Error("Код не введён");
+    const code = prompt(window.t("player.prompt_code"));
+    if (!code) throw new Error(window.t("player.error_no_code"));
 
     const resp = await fetch(`${BRIDGE_URL}/bridge/pair/confirm`, {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ code }),
     });
-    if (!resp.ok) throw new Error("Неверный код или отклонено на мосте");
+    if (!resp.ok) throw new Error(window.t("player.error_bad_code"));
 
     const data = await resp.json();
     localStorage.setItem(TOKEN_STORAGE_KEY, data.token);
@@ -66,7 +62,7 @@ async function bridgeFetchAuthed(url, options, token) {
     });
     if (resp.status === 401 || resp.status === 403) {
         localStorage.removeItem(TOKEN_STORAGE_KEY);
-        throw new BridgeTokenRevokedError("Токен отозван на стороне моста, требуется повторное сопряжение");
+        throw new BridgeTokenRevokedError(window.t("player.error_token_revoked"));
     }
     return resp;
 }
@@ -75,7 +71,7 @@ async function addVideoToBridge(token, videoId, quality, torrentName) {
     const torrentResp = await fetch(
         `${window.ITUBEP_VIDEO.site_origin}/api/video/${videoId}/chunk/${quality}.torrent`
     );
-    if (!torrentResp.ok) throw new Error("Не удалось получить .torrent с сайта");
+    if (!torrentResp.ok) throw new Error(window.t("player.error_no_torrent_fetch"));
 
     const torrentBytes = await torrentResp.arrayBuffer();
     const torrentB64 = btoa(String.fromCharCode(...new Uint8Array(torrentBytes)));
@@ -90,7 +86,7 @@ async function addVideoToBridge(token, videoId, quality, torrentName) {
         }),
     }, token);
 
-    if (!resp.ok) throw new Error("Мост отклонил добавление торрента: " + await resp.text());
+    if (!resp.ok) throw new Error(window.t("player.error_bridge_rejected") + await resp.text());
     return await resp.json();
 }
 
@@ -120,7 +116,7 @@ async function notifyBridgeSeek(token, torrentId, targetIndex) {
             }),
         }, token);
     } catch (e) {
-        console.warn("Не удалось уведомить мост о перемотке:", e);
+        console.warn("[itubep] failed to notify bridge about seek:", e);
         // BridgeTokenRevokedError тоже попадает сюда — не критично прямо
         // сейчас (сегмент всё равно продолжит докачиваться естественным
         // путём), но localStorage уже очищен внутри bridgeFetchAuthed, так
@@ -143,7 +139,7 @@ async function initPlayer() {
     try {
         let token = await getOrCreateToken();
         containerEl.style.display = "block";
-        statusEl.textContent = "Сопряжение выполнено, добавляю торрент...";
+        statusEl.textContent = window.t("player.status_pairing_done");
 
         const quality = qualities[0];
 
@@ -154,15 +150,15 @@ async function initPlayer() {
         } catch (e) {
             console.warn("[itubep] addVideoToBridge упал:", e, "instanceof BridgeTokenRevokedError =", e instanceof BridgeTokenRevokedError);
             if (!(e instanceof BridgeTokenRevokedError)) throw e;
-            statusEl.textContent = "Сопряжение с мостом было отозвано, требуется повторное подтверждение...";
+            statusEl.textContent = window.t("player.status_reauth");
             console.log("[itubep] токен отозван, запрашиваю новое сопряжение...");
             token = await getOrCreateToken(/* forceNewPairing */ true);
             console.log("[itubep] новое сопряжение получено, повторяю добавление торрента...");
-            statusEl.textContent = "Сопряжение выполнено, добавляю торрент...";
+            statusEl.textContent = window.t("player.status_pairing_done");
             handle = await addVideoToBridge(token, video_id, quality.label, quality.torrent_name);
         }
 
-        statusEl.textContent = "Торрент добавлен, запускаю плеер...";
+        statusEl.textContent = window.t("player.status_torrent_added");
 
         // Короткоживущий scoped-токен вместо основного bearer-токена в URL —
         // сам запрос авторизован заголовком (не светится в query), а в URL
@@ -175,7 +171,7 @@ async function initPlayer() {
             headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ torrent_id: handle.torrent_id }),
         }, token);
-        if (!streamTokenResp.ok) throw new Error("Не удалось получить токен для воспроизведения");
+        if (!streamTokenResp.ok) throw new Error(window.t("player.error_no_stream_token"));
         const { stream_token } = await streamTokenResp.json();
 
         const durationsB64 = base64UrlSafe(JSON.stringify(quality.segment_durations));
@@ -193,7 +189,7 @@ async function initPlayer() {
             hls.loadSource(playlistUrl);
             hls.attachMedia(videoEl);
             hls.on(Hls.Events.MANIFEST_PARSED, () => {
-                statusEl.textContent = "Готово к воспроизведению";
+                statusEl.textContent = window.t("player.status_ready");
                 fallbackEl.style.display = "none";
             });
             hls.on(Hls.Events.ERROR, (event, data) => {
@@ -208,12 +204,12 @@ async function initPlayer() {
                     data.details === "fragParsingError";
 
                 if (isFragmentNotReady) {
-                    statusEl.textContent = "Некоторые фрагменты видео ещё загружаются...";
+                    statusEl.textContent = window.t("player.status_loading_fragments");
                     return;
                 }
 
                 if (data.fatal) {
-                    statusEl.textContent = "Ошибка воспроизведения: " + data.details;
+                    statusEl.textContent = window.t("player.status_playback_error") + data.details;
                 }
             });
             let seekDebounceTimer = null;
@@ -230,20 +226,20 @@ async function initPlayer() {
                     const targetIndex = segmentIndexForTime(quality.segment_durations, videoEl.currentTime);
                     if (targetIndex === lastSeekTargetIndex) return;
                     lastSeekTargetIndex = targetIndex;
-                    statusEl.textContent = `Перемотка на сегмент ${targetIndex}, ожидаю докачку...`;
+                    statusEl.textContent = window.t("player.status_seeking", {index: targetIndex});
                     // notifyBridgeSeek(token, handle.torrent_id, targetIndex); — отключено, см. TODO выше
                 }, 300);
             });
         } else if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
             // Safari — нативная поддержка HLS
             videoEl.src = playlistUrl;
-            statusEl.textContent = "Готово к воспроизведению";
+            statusEl.textContent = window.t("player.status_ready");
             fallbackEl.style.display = "none";
         } else {
-            throw new Error("Браузер не поддерживает HLS");
+            throw new Error(window.t("player.error_no_hls"));
         }
     } catch (e) {
-        console.error("[itubep] Не удалось инициализировать плеер моста:", e);
+        console.error("[itubep] failed to initialize bridge player:", e);
         statusEl.textContent = "";
         containerEl.style.display = "none";
         // fallback остаётся видимым — пользователь может скачать .torrent вручную
