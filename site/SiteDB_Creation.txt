@@ -1,3 +1,3 @@
-sudo apt install postgresql postgresql-contrib
+sudo apt install postgresql
 sudo -u postgres createuser --pwprompt itubep
 sudo -u postgres createdb -O itubep itubep
