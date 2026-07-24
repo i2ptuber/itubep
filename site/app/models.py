@@ -49,7 +49,7 @@ class Video(Base):
     manifest_json: Mapped[str] = mapped_column(Text, nullable=False)
     signature: Mapped[str] = mapped_column(String(200), nullable=False)
     published_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
-    view_count: Mapped[int] = mapped_column(Integer, default=0)
+    download_count: Mapped[int] = mapped_column(Integer, default=0)
 
     # --- Модерация (держателем сайта) ---
     # Аналогично: soft-delete, не физическое удаление строки — video_id это

@@ -45,7 +45,7 @@ class SearchResultItem(BaseModel):
     channel_id: str
     channel_display_name: str
     duration_seconds: int
-    view_count: int
+    download_count: int
 
     class Config:
         from_attributes = True
@@ -59,7 +59,7 @@ class VideoListItem(BaseModel):
     video_id: str
     title: str
     duration_seconds: int
-    view_count: int
+    download_count: int
     published_at: str
 
     class Config:

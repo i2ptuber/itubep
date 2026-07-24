@@ -70,7 +70,7 @@ async def cmd_list_videos(args) -> None:
             print(f"{v.video_id}  [{status}]")
             print(f"  название:  {v.title}")
             print(f"  канал:     {channel_name} ({v.channel_id})")
-            print(f"  просмотры: {v.view_count}   опубликовано: {v.published_at}")
+            print(f"  скачивания: {v.download_count}   опубликовано: {v.published_at}")
             if v.removed and v.removed_reason:
                 print(f"  причина удаления: {v.removed_reason}")
             print()

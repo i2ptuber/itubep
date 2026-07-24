@@ -8,8 +8,8 @@ confirm_pairing() дожидается результата поллингом, 
 
 from __future__ import annotations
 
+import logging
 import secrets
-import sys
 import threading
 import time
 import uuid
@@ -17,6 +17,8 @@ import uuid
 from ui.tkinter_dialog import TkinterPairingDialog
 
 from .storage import PolicyStorage
+
+log = logging.getLogger(__name__)
 
 
 class PairingManager:
@@ -36,37 +38,38 @@ class PairingManager:
         self.dialog = dialog or TkinterPairingDialog()
 
     def request_pairing(self, origin: str) -> dict:
-        print(f"[DEBUG] request_pairing вызван для origin={origin!r}", flush=True)
+        log.debug("request_pairing вызван")
 
         if self.storage.is_blocked(origin):
-            print("[DEBUG] origin заблокирован", flush=True)
+            log.debug("origin заблокирован")
             return {"status": "blocked"}
 
         if not self.storage.can_request_pairing(origin):
-            print("[DEBUG] origin на cooldown", flush=True)
+            log.debug("origin на cooldown")
             return {"status": "cooldown"}
 
+        # ВАЖНО: сам код (code) — единственное, что подтверждает, что
+        # человек реально увидел GUI-диалог и ввёл именно то, что там
+        # показано, а не кликнул "Approve" вслепую. Поэтому его НИКОГДА не
+        # пишем в лог, даже на уровне DEBUG — лог может быть скопирован
+        # (например, для саппорта) в течение TTL кода, и это лишний путь
+        # его раскрытия сверх задуманного (см. также send-to-support сценарий).
         code = f"{secrets.randbelow(1_000_000):06d}"
-        print(f"[DEBUG] код сгенерирован: {code}, запускаю поток диалога", flush=True)
+        log.debug("код сгенерирован, запускаю поток диалога")
         self.storage.save_pairing_code(origin, code)
 
         def show_dialog_and_update_status():
-            print("[DEBUG] поток диалога стартовал", flush=True)
+            log.debug("поток диалога стартовал")
             try:
-                print("[DEBUG] вызываю self.dialog.show_pairing_request", flush=True)
                 approved = self.dialog.show_pairing_request(origin, code)
-                print(f"[DEBUG] show_pairing_request вернул: {approved}", flush=True)
+                log.debug("show_pairing_request вернул: %s", approved)
                 self.storage.set_pairing_status(origin, "approved" if approved else "rejected")
-            except BaseException as e:
-                import traceback
-                print(f"[DEBUG] ИСКЛЮЧЕНИЕ в потоке диалога: {e!r}", flush=True)
-                traceback.print_exc(file=sys.stdout)
-                sys.stdout.flush()
+            except BaseException:
+                log.exception("исключение в потоке диалога сопряжения")
 
         t = threading.Thread(target=show_dialog_and_update_status, daemon=True)
-        print(f"[DEBUG] поток создан: {t}, запускаю", flush=True)
         t.start()
-        print(f"[DEBUG] t.start() выполнен, is_alive={t.is_alive()}", flush=True)
+        log.debug("поток запущен, is_alive=%s", t.is_alive())
 
         return {"status": "shown"}
 

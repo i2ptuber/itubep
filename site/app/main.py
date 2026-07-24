@@ -203,6 +203,9 @@ async def get_torrent(
     if chunk is None:
         raise HTTPException(status_code=404, detail="Chunk not found")
 
+    video.download_count += 1
+    await session.commit()
+
     return Response(content=chunk.torrent_file, media_type="application/x-bittorrent")
     
 @app.get("/api/search", response_model=SearchResponse)
@@ -222,7 +225,7 @@ async def search_videos(
     # плюс отдельно по display_name канала (объединяем через UNION по video_id)
     sql = text("""
         SELECT DISTINCT v.video_id, v.title, v.channel_id, c.display_name,
-               v.duration_seconds, v.view_count,
+               v.duration_seconds, v.download_count,
                ts_rank(
                    to_tsvector('simple', v.title || ' ' || v.description || ' ' || c.display_name),
                    plainto_tsquery('simple', :query)
@@ -247,7 +250,7 @@ async def search_videos(
             channel_id=row.channel_id,
             channel_display_name=row.display_name,
             duration_seconds=row.duration_seconds,
-            view_count=row.view_count,
+            download_count=row.download_count,
         )
         for row in rows
     ]
@@ -290,7 +293,7 @@ async def get_channel_videos(
                 video_id=v.video_id,
                 title=v.title,
                 duration_seconds=v.duration_seconds,
-                view_count=v.view_count,
+                download_count=v.download_count,
                 published_at=v.published_at.isoformat(),
             )
             for v in videos

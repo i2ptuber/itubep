@@ -417,21 +417,23 @@ BRIDGE_DIR="${BRIDGE_DIR}"
 VENV_DIR="${VENV_DIR}"
 SNARK_RUN_DIR="${SNARK_RUN_DIR}"
 I2P_MODE="${I2P_MODE}"
+INIT_SYSTEM="${INIT_SYSTEM}"
 
 _is_running() {
-    # kill -0 \$PID сам по себе ненадёжен: PID мог быть переиспользован ОС
-    # другим, не связанным процессом после краша (или это зомби, ждущий
-    # reap — в контейнерах/песочницах это встречается на практике), и тогда
-    # kill -0 всё равно вернёт "существует", хотя это уже не наш процесс.
-    # Дополнительно сверяем /proc/\$PID/cmdline на совпадение ожидаемой
-    # подстроки — простая, но действенная защита от такого ложного срабатывания.
-    local pidfile="\$1" expect_substr="\$2"
+    # Раньше дополнительно сверяли /proc/\$pid/cmdline на подстроку — на
+    # практике это оказалось ненадёжно: launch-i2psnark — это обёрточный
+    # скрипт, который делает exec java ..., и cmdline процесса после этого
+    # никак не похож на "launch-i2psnark"; для python3 -m тоже на практике
+    # никогда не совпадало. Вместо этого проверяем то, что нас в
+    # действительности волнует: процесс жив (kill -0) И ожидаемый порт
+    # реально слушается — а не точное совпадение аргументов запуска.
+    local pidfile="\$1" port="\$2"
     [ -f "\$pidfile" ] || return 1
     local pid; pid="\$(cat "\$pidfile" 2>/dev/null)"
     [ -n "\$pid" ] || return 1
     kill -0 "\$pid" 2>/dev/null || return 1
-    if [ -r "/proc/\$pid/cmdline" ]; then
-        tr '\0' ' ' < "/proc/\$pid/cmdline" 2>/dev/null | grep -qF "\$expect_substr" || return 1
+    if [ -n "\$port" ]; then
+        _port_in_use "\$port" || return 1
     fi
     return 0
 }
@@ -455,8 +457,8 @@ except OSError:
 }
 
 _start() {
-    local name="\$1" pidfile="\$2" logfile="\$3" workdir="\$4" expect_substr="\$5" port="\$6"; shift 6
-    if _is_running "\$pidfile" "\$expect_substr"; then
+    local name="\$1" pidfile="\$2" logfile="\$3" workdir="\$4" port="\$5" wait_timeout="\$6"; shift 6
+    if _is_running "\$pidfile" "\$port"; then
         echo "\$name уже запущен (PID \$(cat "\$pidfile"))"
         return 0
     fi
@@ -471,15 +473,16 @@ _start() {
     : > "\$logfile"  # обрезаем лог — иначе вывод прошлой попытки запуска
                      # мешается со свежей (append-режим внутри самого запуска
                      # сохраняется, это just однократная обрезка перед стартом)
-    ( cd "\$workdir" && nohup "\$@" >>"\$logfile" 2>&1 & echo \$! > "\$pidfile" )
+    ( cd "\$workdir" && PYTHONUNBUFFERED=1 nohup "\$@" >>"\$logfile" 2>&1 & echo \$! > "\$pidfile" )
 
     # JVM (i2psnark) может стартовать не за одно мгновение — поллим вместо
-    # одной фиксированной короткой паузы (раньше 0.3с иногда не хватало,
-    # особенно на слабом железе, и давало ложное "НЕ запустился" ровно
-    # перед тем как процесс на самом деле поднимался).
+    # одной фиксированной короткой паузы. wait_timeout настраивается на
+    # вызов: i2psnark ждёт заметно дольше (установка I2P-туннелей — это
+    # легитимно небыстрый процесс, "Connecting to I2P" в логе на 15-й
+    # секунде — НЕ ошибка, а норма, особенно на "холодном" роутере).
     local waited=0
-    while [ "\$waited" -lt 15 ]; do
-        if _is_running "\$pidfile" "\$expect_substr"; then
+    while [ "\$waited" -lt "\$wait_timeout" ]; do
+        if _is_running "\$pidfile" "\$port"; then
             echo "\$name запущен (PID \$(cat "\$pidfile"))"
             return 0
         fi
@@ -487,14 +490,25 @@ _start() {
         waited=\$((waited + 1))
     done
 
-    echo "\$name НЕ запустился за 15с — смотрите \$logfile. Последние строки:"
+    # Таймаут вышел, но прежде чем пугать "не запустился" — проверим, жив ли
+    # вообще процесс. Это означает, что сервис, скорее всего, просто ещё
+    # поднимается (JVM/I2P), а не упал.
+    local pid; pid="\$(cat "\$pidfile" 2>/dev/null)"
+    if [ -n "\$pid" ] && kill -0 "\$pid" 2>/dev/null; then
+        echo "\$name: процесс жив (PID \$pid), но порт \$port ещё не слушается через \${wait_timeout}с — это НЕ обязательно ошибка"
+        echo "  (для i2psnark установка I2P-туннелей может занимать больше времени). Проверьте чуть позже:"
+        echo "  itubep-ctl status-bridge / status-snark   (или загляните в \$logfile)"
+        return 0
+    fi
+
+    echo "\$name НЕ запустился за \${wait_timeout}с — смотрите \$logfile. Последние строки:"
     tail -n 15 "\$logfile" 2>/dev/null | sed 's/^/    /'
     return 1
 }
 
 _stop() {
-    local name="\$1" pidfile="\$2" expect_substr="\$3"
-    if _is_running "\$pidfile" "\$expect_substr"; then
+    local name="\$1" pidfile="\$2" port="\$3"
+    if _is_running "\$pidfile" "\$port"; then
         kill "\$(cat "\$pidfile")"
         rm -f "\$pidfile"
         echo "\$name остановлен"
@@ -505,28 +519,71 @@ _stop() {
 }
 
 _status() {
-    local name="\$1" pidfile="\$2" expect_substr="\$3"
-    if _is_running "\$pidfile" "\$expect_substr"; then
+    local name="\$1" pidfile="\$2" port="\$3"
+    if _is_running "\$pidfile" "\$port"; then
         echo "\$name: запущен (PID \$(cat "\$pidfile"))"
     else
         echo "\$name: остановлен"
     fi
 }
 
+_svc_start() {
+    # На systemd делегируем реальному супервизору вместо pidfile-механизма —
+    # иначе status/start никогда не узнают о процессе, поднятом юнитом
+    # (Type=simple, enable --now), и будут считать порт "занятым кем-то
+    # посторонним". На всех остальных системах (sysvinit/OpenRC/runit/no
+    # init) systemd-юнитов не существует в принципе — там pidfile-механизм
+    # это и есть единственный супервизор, ничего не меняем.
+    local unit="\$1" name="\$2" pidfile="\$3" logfile="\$4" workdir="\$5" port="\$6" wait_timeout="\$7"; shift 7
+    if [ "\$INIT_SYSTEM" = "systemd" ]; then
+        systemctl --user start "\$unit"
+        return \$?
+    fi
+    _start "\$name" "\$pidfile" "\$logfile" "\$workdir" "\$port" "\$wait_timeout" "\$@"
+}
+
+_svc_stop() {
+    local unit="\$1" name="\$2" pidfile="\$3" port="\$4"
+    if [ "\$INIT_SYSTEM" = "systemd" ]; then
+        systemctl --user stop "\$unit"
+        return \$?
+    fi
+    _stop "\$name" "\$pidfile" "\$port"
+}
+
+_svc_status() {
+    local unit="\$1" name="\$2" pidfile="\$3" port="\$4"
+    if [ "\$INIT_SYSTEM" = "systemd" ]; then
+        if systemctl --user is-active --quiet "\$unit"; then
+            echo "\$name: запущен (systemd, \$(systemctl --user show -p MainPID --value "\$unit" 2>/dev/null | sed 's/^0\$/?/'))"
+        else
+            echo "\$name: остановлен (systemd: \$(systemctl --user is-active "\$unit" 2>/dev/null))"
+        fi
+        return 0
+    fi
+    _status "\$name" "\$pidfile" "\$port"
+}
+
 case "\${1:-}" in
     start-bridge)
-        _start "мост" "\${RUN_STATE_DIR}/bridge.pid" "\${LOG_DIR}/bridge.log" "\$BRIDGE_DIR" "transport.http_server" "9080" \\
+        _svc_start "itubep-bridge.service" "мост" "\${RUN_STATE_DIR}/bridge.pid" "\${LOG_DIR}/bridge.log" "\$BRIDGE_DIR" "9080" "15" \\
             "\${VENV_DIR}/bin/python3" -m transport.http_server
         ;;
-    stop-bridge)  _stop "мост" "\${RUN_STATE_DIR}/bridge.pid" "transport.http_server" ;;
-    status-bridge) _status "мост" "\${RUN_STATE_DIR}/bridge.pid" "transport.http_server" ;;
+    stop-bridge)  _svc_stop  "itubep-bridge.service" "мост" "\${RUN_STATE_DIR}/bridge.pid" "9080" ;;
+    status-bridge) _svc_status "itubep-bridge.service" "мост" "\${RUN_STATE_DIR}/bridge.pid" "9080" ;;
     start-snark)
         [ "\$I2P_MODE" = "i2pd" ] || { echo "i2psnark standalone не используется (режим: \$I2P_MODE)"; exit 0; }
-        _start "i2psnark" "\${RUN_STATE_DIR}/snark.pid" "\${LOG_DIR}/snark.log" "\$SNARK_RUN_DIR" "launch-i2psnark" "8002" \\
+        _svc_start "itubep-i2psnark.service" "i2psnark" "\${RUN_STATE_DIR}/snark.pid" "\${LOG_DIR}/snark.log" "\$SNARK_RUN_DIR" "8002" "60" \\
             "\${SNARK_RUN_DIR}/launch-i2psnark"
         ;;
-    stop-snark)   _stop "i2psnark" "\${RUN_STATE_DIR}/snark.pid" "launch-i2psnark" ;;
-    status-snark) _status "i2psnark" "\${RUN_STATE_DIR}/snark.pid" "launch-i2psnark" ;;
+    stop-snark)
+        [ "\$I2P_MODE" = "i2pd" ] || { echo "i2psnark standalone не используется (режим: \$I2P_MODE)"; exit 0; }
+        _svc_stop "itubep-i2psnark.service" "i2psnark" "\${RUN_STATE_DIR}/snark.pid" "8002"
+        ;;
+    status-snark)
+        [ "\$I2P_MODE" = "i2pd" ] || { echo "i2psnark standalone не используется (режим: \$I2P_MODE)"; exit 0; }
+        _svc_status "itubep-i2psnark.service" "i2psnark" "\${RUN_STATE_DIR}/snark.pid" "8002"
+        ;;
     start-all)
         "\$0" start-snark
         sleep 2

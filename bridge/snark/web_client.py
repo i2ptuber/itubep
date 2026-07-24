@@ -46,17 +46,21 @@ class I2PSnarkWebClient:
     def _fetch_priority_form(self, torrent_name: str) -> tuple[str, str]:
         """
         Возвращает (nonce, form_action) из формы приоритета.
-        Бросает TorrentMustBeStoppedError, если торрент ещё не остановлен.
+        Бросает TorrentMustBeStoppedError, если форма ещё недоступна — как
+        правило, потому что торрент ещё не остановлен, но НЕ проверяем это по
+        переведённому тексту ошибки (i2psnark поддерживает ~60 языков
+        интерфейса, и на любом языке кроме английского такое сравнение
+        молча никогда не срабатывало бы — это баг, который был здесь
+        раньше). Единственный надёжный, не зависящий от языка сигнал —
+        наличие/отсутствие самой формы с полями pri.N. Вызывающий код уже
+        рассчитан на ограниченное число повторов при этой ошибке
+        (см. SnarkIntegration._stop_apply_start), так что не пытаемся
+        различать "ещё не остановлен" от "разметка неожиданно другая" —
+        обе причины retryable одинаково.
         """
         url = self._torrent_dir_url(torrent_name)
         resp = self.session.get(url)
         resp.raise_for_status()
-
-        if "Torrent must be stopped" in resp.text:
-            raise TorrentMustBeStoppedError(
-                f"Торрент '{torrent_name}' должен быть остановлен перед изменением "
-                f"приоритета (вызовите rpc_client.torrent_stop() и дождитесь статуса)."
-            )
 
         soup = BeautifulSoup(resp.text, "html.parser")
 
@@ -67,9 +71,12 @@ class I2PSnarkWebClient:
                 break
 
         if target_form is None:
-            raise WebClientError(
-                f"Не найдено формы с полями pri.N на странице {url}. "
-                f"Торрент не multi-file, или разметка версии i2psnark отличается."
+            raise TorrentMustBeStoppedError(
+                f"Торрент '{torrent_name}': форма приоритета (поля pri.N) "
+                f"пока недоступна на {url} — обычно значит, что торрент ещё "
+                f"не полностью остановлен (вызовите rpc_client.torrent_stop() "
+                f"и дождитесь статуса перед повтором); реже — что разметка "
+                f"этой версии i2psnark отличается от ожидаемой."
             )
 
         nonce_input = target_form.find("input", attrs={"name": "nonce"})
@@ -109,11 +116,13 @@ class I2PSnarkWebClient:
 
         resp = self.session.post(form_action, data=form_data)
         resp.raise_for_status()
-
-        if "Torrent must be stopped" in resp.text:
-            raise TorrentMustBeStoppedError(
-                "Торрент перестал быть остановленным между GET и POST (гонка состояний)."
-            )
+        # Раньше здесь была ещё одна проверка на переведённый текст ошибки
+        # ("гонка состояний между GET и POST") — та же проблема с локалью,
+        # что и в _fetch_priority_form, плюс не дающая практической пользы:
+        # если гонка всё-таки произошла, следующий вызов set_file_priorities
+        # из retry-цикла на уровень выше (см. integration.py) всё равно
+        # заново пройдёт через _fetch_priority_form и корректно поймает это
+        # через language-independent проверку по форме pri.N.
 
     def set_in_order(self, torrent_name: str, enabled: bool) -> None:
         """

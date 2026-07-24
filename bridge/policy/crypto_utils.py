@@ -42,7 +42,15 @@ def canonical_json(data: dict) -> bytes:
 
 
 def canonical_json_for_id(data: dict) -> bytes:
-    payload = {k: v for k, v in data.items() if k not in ("signature", "video_id")}
+    # published_at ИСКЛЮЧЁН намеренно: video_id должен зависеть только от
+    # содержимого (канал, заголовок, описание, качества/торренты), а не от
+    # момента публикации — иначе повторная попытка опубликовать тот же самый
+    # уже собранный контент (например, после сетевого сбоя между сборкой
+    # торрента и отправкой на сайт) получает НОВЫЙ video_id при каждой
+    # попытке, хотя контент (и torrent_name/info_hash) не изменился —
+    # приводит к дублям в БД сайта под разными video_id. signature
+    # (canonical_json, не эта функция) по-прежнему покрывает published_at.
+    payload = {k: v for k, v in data.items() if k not in ("signature", "video_id", "published_at")}
     return json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
 
 

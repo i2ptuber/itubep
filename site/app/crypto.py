@@ -83,10 +83,14 @@ def verify_video_manifest(manifest: dict, channel_public_key_b64: str) -> tuple[
     if not verify_signature(manifest, channel_public_key_b64):
         return False, "invalid signature"
 
-    # video_id = sha256 от манифеста БЕЗ полей signature И video_id (самоссылка
-    # иначе никогда не сойдётся — id не может включать сам себя в хешируемые данные)
+    # video_id = sha256 от манифеста БЕЗ полей signature, video_id (самоссылка
+    # иначе никогда не сойдётся — id не может включать сам себя в хешируемые
+    # данные) И published_at (video_id должен зависеть только от контента,
+    # не от момента публикации — см. bridge/policy/crypto_utils.py:canonical_json_for_id,
+    # ЭТУ логику нужно менять синхронно на обеих сторонах, иначе здесь начнёт
+    # падать video_id mismatch на полностью валидных публикациях).
     import hashlib
-    payload = {k: v for k, v in manifest.items() if k not in ("signature", "video_id")}
+    payload = {k: v for k, v in manifest.items() if k not in ("signature", "video_id", "published_at")}
     canonical_for_id = json.dumps(payload, sort_keys=True, separators=(",", ":")).encode("utf-8")
     computed_id = hashlib.sha256(canonical_for_id).hexdigest()
 
