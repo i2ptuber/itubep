@@ -456,6 +456,28 @@ except OSError:
 " 2>/dev/null
 }
 
+_pid_on_port() {
+    # Отдаёт PID процесса, реально слушающего TCP-порт \$1 (или пусто, если
+    # не нашли/нечем проверить). Нужно потому что PID, пойманный через \$!
+    # в момент запуска, не всегда оказывается PID-ом процесса, который в
+    # итоге держит порт — некоторые обёрточные скрипты (например
+    # launch-i2psnark) запускают целевой процесс как ДОЧЕРНИЙ, а не через
+    # exec, так что \$! указывает на промежуточный/родительский процесс, а
+    # не на реального держателя порта.
+    local port="\$1"
+    if command -v ss >/dev/null 2>&1; then
+        ss -ltnp 2>/dev/null | grep -E "[:.]\${port}[[:space:]]" | sed -n 's/.*pid=\([0-9]\+\).*/\1/p' | head -n1
+        return
+    fi
+    if command -v lsof >/dev/null 2>&1; then
+        lsof -tiTCP:"\$port" -sTCP:LISTEN 2>/dev/null | head -n1
+        return
+    fi
+    if command -v fuser >/dev/null 2>&1; then
+        fuser "\${port}/tcp" 2>/dev/null | awk '{print \$1}'
+    fi
+}
+
 _start() {
     local name="\$1" pidfile="\$2" logfile="\$3" workdir="\$4" port="\$5" wait_timeout="\$6"; shift 6
     if _is_running "\$pidfile" "\$port"; then
@@ -483,6 +505,18 @@ _start() {
     local waited=0
     while [ "\$waited" -lt "\$wait_timeout" ]; do
         if _is_running "\$pidfile" "\$port"; then
+            # Раз _is_running только что подтвердила, что порт слушается —
+            # спросим ОС, кто именно его держит, и если это не тот PID, что
+            # мы записали из \$!, поправим pid-файл на реальный. Иначе
+            # stop-all будет пытаться убить процесс, который либо уже не
+            # существует, либо не тот, что реально держит порт (см. кейс
+            # с обёрточными скриптами вроде launch-i2psnark выше).
+            if [ -n "\$port" ]; then
+                local real_pid; real_pid="\$(_pid_on_port "\$port")"
+                if [ -n "\$real_pid" ] && [ "\$real_pid" != "\$(cat "\$pidfile" 2>/dev/null)" ]; then
+                    echo "\$real_pid" > "\$pidfile"
+                fi
+            fi
             echo "\$name запущен (PID \$(cat "\$pidfile"))"
             return 0
         fi
@@ -509,7 +543,40 @@ _start() {
 _stop() {
     local name="\$1" pidfile="\$2" port="\$3"
     if _is_running "\$pidfile" "\$port"; then
-        kill "\$(cat "\$pidfile")"
+        local pid; pid="\$(cat "\$pidfile")"
+        kill "\$pid" 2>/dev/null
+
+        # kill только просит процесс завершиться (SIGTERM) и возвращается
+        # немедленно — он НЕ ждёт реальной смерти процесса. JVM (i2psnark)
+        # может ещё несколько секунд закрывать I2P-туннели, прежде чем
+        # реально освободит порт. Раньше pid-файл удалялся и "остановлен"
+        # печаталось сразу же — и если сразу следом запускался start-all,
+        # он не находил pid-файл (уже удалён), видел занятый порт и решал,
+        # что это посторонний процесс, хотя это был тот же самый сервис,
+        # ещё не успевший завершиться. Поэтому дожидаемся реальной смерти
+        # процесса, с эскалацией до SIGKILL по таймауту.
+        local waited=0 stop_timeout=15
+        while kill -0 "\$pid" 2>/dev/null; do
+            if [ "\$waited" -ge "\$stop_timeout" ]; then
+                echo "\$name не завершился за \${stop_timeout}с после SIGTERM — принудительно (SIGKILL)"
+                kill -9 "\$pid" 2>/dev/null
+                break
+            fi
+            sleep 1
+            waited=\$((waited + 1))
+        done
+
+        # Даже после смерти процесса порт освобождается не всегда мгновенно
+        # (например TIME_WAIT) — подождём ещё немного, чтобы следующий
+        # start-all не спутал это с чужим процессом.
+        if [ -n "\$port" ]; then
+            waited=0
+            while [ "\$waited" -lt 5 ] && _port_in_use "\$port"; do
+                sleep 1
+                waited=\$((waited + 1))
+            done
+        fi
+
         rm -f "\$pidfile"
         echo "\$name остановлен"
     else

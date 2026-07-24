@@ -4,6 +4,16 @@
     <meta charset="UTF-8">
     <title>{% block title %}ITubeP{% endblock %}</title>
     <link rel="stylesheet" href="/static/style.css">
+    <!-- Строки текущего языка сайта для клиентского JS (плеер, мастер
+         публикации) — см. static/i18n.js. Язык независим от языка моста.
+         ВАЖНО: должно грузиться в head, ДО скриптов из блока content
+         (player.js, инлайн-скрипт publish.html) — они вызывают window.t()
+         сразу же, в некоторых случаях (уже сопряжённый пользователь —
+         getOrCreateToken() резолвится микротаском без похода в сеть)
+         быстрее, чем браузер успел бы дойти до этого script-тега, если бы
+         он стоял в конце body, как раньше. -->
+    <script>window.ITUBEP_STRINGS = {{ js_strings|tojson }};</script>
+    <script src="/static/i18n.js"></script>
 </head>
 <body>
     <header>
@@ -49,10 +59,6 @@
     <main>
         {% block content %}{% endblock %}
     </main>
-    <!-- Строки текущего языка сайта для клиентского JS (плеер, мастер
-         публикации) — см. static/i18n.js. Язык независим от языка моста. -->
-    <script>window.ITUBEP_STRINGS = {{ js_strings|tojson }};</script>
-    <script src="/static/i18n.js"></script>
     <script src="/static/account-menu.js"></script>
 </body>
 </html>
