@@ -1,0 +1,16 @@
+{% extends "base.html" %}
+{% block title %}{{ t('about.title') }} — ITubeP{% endblock %}
+{% block content %}
+    <div class="static-page">
+        <h1>{{ t('about.title') }}</h1>
+
+        <h2>{{ t('about.source_heading') }}</h2>
+        <p>{{ t('about.source_text') }}</p>
+        <ul>
+            <li><a href="https://github.com/i2ptuber/itubep" target="_blank" rel="noopener">github.com/i2ptuber/itubep</a></li>
+        </ul>
+
+        <h2>{{ t('about.contact_heading') }}</h2>
+        <p>{{ t('about.contact_text') }}</p>
+    </div>
+{% endblock %}

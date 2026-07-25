@@ -1,19 +1,52 @@
 {% extends "base.html" %}
 {% block title %}{{ query or t('search.home_title') }} — ITubeP{% endblock %}
 {% block content %}
-    {% if results %}
-        <div class="video-grid">
-            {% for v in results %}
-            <a class="video-card" href="/video/{{ v.video_id }}">
-                <div class="video-thumb-placeholder"></div>
-                <div class="video-title">{{ v.title }}</div>
-                <div class="video-meta">{{ v.channel_display_name }} · {{ v.duration_seconds }} {{ t('search.sec') }}</div>
-            </a>
-            {% endfor %}
-        </div>
-    {% elif query %}
-        <p class="empty-state">{{ t('search.nothing_found').format(query=query) }}</p>
+    {% if query %}
+        {% if results %}
+            <div class="video-grid">
+                {% for v in results %}
+                <a class="video-card" href="/video/{{ v.video_id }}">
+                    <div class="video-thumb-placeholder"></div>
+                    <div class="video-title">{{ v.title }}</div>
+                    <div class="video-meta">{{ v.channel_display_name }} · {{ v.duration_seconds }} {{ t('search.sec') }}</div>
+                </a>
+                {% endfor %}
+            </div>
+        {% else %}
+            <p class="empty-state">{{ t('search.nothing_found').format(query=query) }}</p>
+        {% endif %}
     {% else %}
-        <p class="empty-state">{{ t('search.enter_query') }}</p>
+        <!-- Главная без поискового запроса: "recent" (8 последних
+             опубликованных видео) сверху, "random" (16 случайных) ниже.
+             Вкладка "подписки" появится после механизма подписок. -->
+        {% if recent_videos or random_videos %}
+            {% if recent_videos %}
+                <h2 class="feed-heading">{{ t('search.recent_heading') }}</h2>
+                <div class="video-grid">
+                    {% for v in recent_videos %}
+                    <a class="video-card" href="/video/{{ v.video_id }}">
+                        <div class="video-thumb-placeholder"></div>
+                        <div class="video-title">{{ v.title }}</div>
+                        <div class="video-meta">{{ v.channel_display_name }} · {{ v.duration_seconds }} {{ t('search.sec') }}</div>
+                    </a>
+                    {% endfor %}
+                </div>
+            {% endif %}
+
+            {% if random_videos %}
+                <h2 class="feed-heading">{{ t('search.random_heading') }}</h2>
+                <div class="video-grid">
+                    {% for v in random_videos %}
+                    <a class="video-card" href="/video/{{ v.video_id }}">
+                        <div class="video-thumb-placeholder"></div>
+                        <div class="video-title">{{ v.title }}</div>
+                        <div class="video-meta">{{ v.channel_display_name }} · {{ v.duration_seconds }} {{ t('search.sec') }}</div>
+                    </a>
+                    {% endfor %}
+                </div>
+            {% endif %}
+        {% else %}
+            <p class="empty-state">{{ t('search.no_videos_yet') }}</p>
+        {% endif %}
     {% endif %}
 {% endblock %}

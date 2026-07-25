@@ -15,8 +15,12 @@ from fastapi.templating import Jinja2Templates
 
 from .database import get_session, init_models, async_session
 from .models import Channel, Video, VideoChunk, RateLimitConfig
-from .schemas import ChannelRegisterRequest, ChannelResponse, SearchResultItem, SearchResponse, VideoListItem, ChannelVideosResponse
-from .crypto import verify_channel_record, verify_video_manifest
+from .schemas import (
+    ChannelRegisterRequest, ChannelResponse, SearchResultItem, SearchResponse,
+    VideoListItem, ChannelVideosResponse, StudioUpdateRequest,
+    StudioAuthRequest, StudioStateResponse,
+)
+from .crypto import verify_channel_record, verify_video_manifest, verify_signature
 from .rate_limit import enforce
 from .i18n import get_language, get_translator, get_strings, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE, COOKIE_NAME
 
@@ -104,6 +108,139 @@ async def get_channel(channel_id: str, session: AsyncSession = Depends(get_sessi
         channel_id=channel.channel_id,
         display_name=channel.display_name,
         updated_at=record.get("updated_at", ""),
+        site_display_name=channel.site_display_name,
+        site_description=channel.site_description,
+        pinned_video_id=channel.pinned_video_id,
+    )
+
+
+@app.post("/api/channel/{channel_id}/studio")
+async def studio_update(
+    channel_id: str,
+    req: StudioUpdateRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Обновление "студии" канала (переименование НА ЭТОМ САЙТЕ, описание,
+    закреплённое видео, доступ к отдельным видео) — вызывается мостом
+    (bridge/policy/authz.py:studio_update), не напрямую браузером. Запись
+    подписана приватным ключом канала — проверяем подпись против
+    public_key, УЖЕ известного сайту из БД (не из тела запроса), иначе
+    кто угодно мог бы прислать свой ключ вместе с "обновлением" чужого
+    channel_id.
+    """
+    if req.channel_id != channel_id:
+        raise HTTPException(status_code=400, detail="channel_id mismatch between path and body")
+
+    enforce("studio_update_id", channel_id)
+
+    channel = await session.get(Channel, channel_id)
+    if channel is None:
+        raise HTTPException(status_code=404, detail="Unknown channel_id — register channel first")
+    if channel.banned:
+        raise HTTPException(status_code=403, detail="Канал заблокирован держателем сайта")
+
+    if not verify_signature(req.model_dump(), channel.public_key):
+        raise HTTPException(status_code=400, detail="Invalid signature")
+
+    if req.updated_at <= channel.studio_updated_at:
+        raise HTTPException(
+            status_code=409,
+            detail="Записанная версия студийного обновления не новее существующей",
+        )
+
+    if req.pinned_video_id:
+        pinned = await session.get(Video, req.pinned_video_id)
+        if pinned is None or pinned.channel_id != channel_id or pinned.removed:
+            raise HTTPException(status_code=400, detail="pinned_video_id does not belong to this channel")
+
+    if req.video_access:
+        result = await session.execute(
+            select(Video).where(Video.video_id.in_(list(req.video_access.keys())))
+        )
+        videos_by_id = {v.video_id: v for v in result.scalars().all()}
+        for video_id, level in req.video_access.items():
+            if level not in ("public", "unlisted", "private"):
+                raise HTTPException(status_code=400, detail=f"Invalid access level: {level}")
+            video = videos_by_id.get(video_id)
+            if video is None or video.channel_id != channel_id:
+                raise HTTPException(status_code=400, detail=f"Video {video_id} does not belong to this channel")
+            video.access_level = level
+
+    channel.site_display_name = req.site_display_name
+    channel.site_description = req.site_description
+    channel.pinned_video_id = req.pinned_video_id
+    channel.studio_updated_at = req.updated_at
+
+    await session.commit()
+
+    return {"status": "ok", "channel_id": channel_id}
+
+
+STUDIO_STATE_TIMESTAMP_TOLERANCE_SECONDS = 300  # окно свежести для read-запроса (не монотонный счётчик — просто анти-replay "не старше N минут")
+
+
+@app.post("/api/channel/{channel_id}/studio-state", response_model=StudioStateResponse)
+async def studio_state(
+    channel_id: str,
+    req: StudioAuthRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Читает полное состояние "студии" владельца канала — В ОТЛИЧИЕ от
+    /api/channel/{id}/videos (публичный, только access_level="public"),
+    здесь возвращаются ВСЕ видео канала (включая unlisted/private), потому
+    что это нужно владельцу для управления доступом. Поэтому запрос должен
+    быть подписан приватным ключом канала (проверяем против public_key из
+    БД), а не быть просто GET по известному channel_id.
+    """
+    import time as _time
+
+    if req.channel_id != channel_id:
+        raise HTTPException(status_code=400, detail="channel_id mismatch between path and body")
+
+    enforce("studio_state_id", channel_id)
+
+    channel = await session.get(Channel, channel_id)
+    if channel is None:
+        raise HTTPException(status_code=404, detail="Unknown channel_id")
+    if channel.banned:
+        raise HTTPException(status_code=403, detail="Канал заблокирован держателем сайта")
+
+    if not verify_signature(req.model_dump(), channel.public_key):
+        raise HTTPException(status_code=400, detail="Invalid signature")
+
+    try:
+        ts = float(req.timestamp)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid timestamp")
+    if abs(_time.time() - ts) > STUDIO_STATE_TIMESTAMP_TOLERANCE_SECONDS:
+        raise HTTPException(status_code=403, detail="Timestamp too old or too far in the future")
+
+    result = await session.execute(
+        select(Video)
+        .where(Video.channel_id == channel_id, Video.removed == False)  # noqa: E712
+        .order_by(Video.published_at.desc())
+    )
+    videos = result.scalars().all()
+
+    return StudioStateResponse(
+        channel_id=channel.channel_id,
+        display_name=channel.display_name,
+        site_display_name=channel.site_display_name,
+        site_description=channel.site_description,
+        pinned_video_id=channel.pinned_video_id,
+        videos=[
+            VideoListItem(
+                video_id=v.video_id,
+                title=v.title,
+                duration_seconds=v.duration_seconds,
+                download_count=v.download_count,
+                published_at=v.published_at.isoformat(),
+                access_level=v.access_level,
+            )
+            for v in videos
+        ],
     )
     
 @app.post("/api/video/publish")
@@ -178,7 +315,7 @@ async def publish_video(
 async def get_manifest(video_id: str, session: AsyncSession = Depends(get_session)):
     enforce("manifest_read")
     video = await session.get(Video, video_id)
-    if video is None or video.removed:
+    if video is None or video.removed or video.access_level == "private":
         raise HTTPException(status_code=404, detail="Video not found")
     return json.loads(video.manifest_json)
 
@@ -192,7 +329,7 @@ async def get_torrent(
     enforce("torrent_download")
 
     video = await session.get(Video, video_id)
-    if video is None or video.removed:
+    if video is None or video.removed or video.access_level == "private":
         raise HTTPException(status_code=404, detail="Video not found")
 
     result = await session.execute(
@@ -236,6 +373,7 @@ async def search_videos(
         WHERE to_tsvector('simple', v.title || ' ' || v.description || ' ' || c.display_name)
               @@ plainto_tsquery('simple', :query)
           AND v.removed = false
+          AND v.access_level = 'public'
           AND c.banned = false
         ORDER BY rank DESC
         LIMIT :limit
@@ -273,13 +411,19 @@ async def get_channel_videos(
 
     count_result = await session.execute(
         select(func.count()).select_from(Video)
-        .where(Video.channel_id == channel_id, Video.removed == False)  # noqa: E712
+        .where(
+            Video.channel_id == channel_id, Video.removed == False,  # noqa: E712
+            Video.access_level == "public",
+        )
     )
     total = count_result.scalar_one()
 
     result = await session.execute(
         select(Video)
-        .where(Video.channel_id == channel_id, Video.removed == False)  # noqa: E712
+        .where(
+            Video.channel_id == channel_id, Video.removed == False,  # noqa: E712
+            Video.access_level == "public",
+        )
         .order_by(Video.published_at.desc())
         .limit(limit)
         .offset(offset)
@@ -296,6 +440,7 @@ async def get_channel_videos(
                 duration_seconds=v.duration_seconds,
                 download_count=v.download_count,
                 published_at=v.published_at.isoformat(),
+                access_level=v.access_level,
             )
             for v in videos
         ],
@@ -329,6 +474,9 @@ async def set_lang(request: Request, lang: str, next: str = "/"):
 @app.get("/", response_class=HTMLResponse)
 async def home_page(request: Request, q: str = "", session: AsyncSession = Depends(get_session)):
     results = []
+    recent_videos = []
+    random_videos = []
+
     if q.strip():
         # Тот же дорогой ts_vector-запрос, что и /api/search — тот же бюджет.
         enforce("search")
@@ -344,14 +492,56 @@ async def home_page(request: Request, q: str = "", session: AsyncSession = Depen
             WHERE to_tsvector('simple', v.title || ' ' || v.description || ' ' || c.display_name)
                   @@ plainto_tsquery('simple', :query)
               AND v.removed = false
+              AND v.access_level = 'public'
               AND c.banned = false
             ORDER BY rank DESC LIMIT 40
         """)
         result = await session.execute(sql, {"query": q})
         results = result.fetchall()
+    else:
+        # Без поискового запроса — лента главной: "recent" (8 последних
+        # опубликованных) + "random" (16 случайных, за вычетом уже попавших
+        # в recent, чтобы одно и то же видео не мелькало на странице дважды).
+        # Вкладка "подписки" — после того, как появится сам механизм подписок.
+        enforce("home_feed")
+
+        recent_sql = text("""
+            SELECT v.video_id, v.title, c.display_name AS channel_display_name, v.duration_seconds
+            FROM videos v
+            JOIN channels c ON v.channel_id = c.channel_id
+            WHERE v.removed = false AND v.access_level = 'public' AND c.banned = false
+            ORDER BY v.published_at DESC
+            LIMIT 8
+        """)
+        recent_result = await session.execute(recent_sql)
+        recent_videos = recent_result.fetchall()
+        recent_ids = {v.video_id for v in recent_videos}
+
+        # ORDER BY random() — на скромном объёме данных этого проекта
+        # (нишевый сайт, не миллионы строк) достаточно быстро и не требует
+        # отдельной инфраструктуры для сэмплирования; берём с запасом на
+        # длину recent_ids, чтобы после фильтрации осталось 16.
+        random_sql = text("""
+            SELECT v.video_id, v.title, c.display_name AS channel_display_name, v.duration_seconds
+            FROM videos v
+            JOIN channels c ON v.channel_id = c.channel_id
+            WHERE v.removed = false AND v.access_level = 'public' AND c.banned = false
+            ORDER BY random()
+            LIMIT :limit
+        """)
+        random_result = await session.execute(random_sql, {"limit": 16 + len(recent_ids)})
+        random_videos = [v for v in random_result.fetchall() if v.video_id not in recent_ids][:16]
 
     return templates.TemplateResponse(
-        request, "search.html", {"query": q, "results": results, **_i18n_ctx(request)},
+        request,
+        "search.html",
+        {
+            "query": q,
+            "results": results,
+            "recent_videos": recent_videos,
+            "random_videos": random_videos,
+            **_i18n_ctx(request),
+        },
     )
 
 
@@ -367,13 +557,24 @@ async def channel_page(
 
     result = await session.execute(
         select(Video)
-        .where(Video.channel_id == channel_id, Video.removed == False)  # noqa: E712
+        .where(
+            Video.channel_id == channel_id, Video.removed == False,  # noqa: E712
+            Video.access_level == "public",
+        )
         .order_by(Video.published_at.desc())
     )
     videos = result.scalars().all()
 
+    pinned_video = None
+    if channel.pinned_video_id:
+        pinned_video = await session.get(Video, channel.pinned_video_id)
+        if pinned_video is not None and (pinned_video.removed or pinned_video.access_level == "private"):
+            pinned_video = None
+
     return templates.TemplateResponse(
-        request, "channel.html", {"channel": channel, "videos": videos, **_i18n_ctx(request)},
+        request,
+        "channel.html",
+        {"channel": channel, "videos": videos, "pinned_video": pinned_video, **_i18n_ctx(request)},
     )
 
 
@@ -384,7 +585,10 @@ async def video_page(
     enforce("video_page")
 
     video = await session.get(Video, video_id)
-    if video is None or video.removed:
+    if video is None or video.removed or video.access_level == "private":
+        # private — намеренно не отдаётся сайтом никому (см. models.py:Video.access_level) —
+        # сайт не умеет отличать владельца от постороннего посетителя, поэтому
+        # приватные видео предназначены для просмотра только локально у автора.
         raise HTTPException(status_code=404, detail="Video not found")
 
     channel = await session.get(Channel, video.channel_id)
@@ -411,6 +615,39 @@ async def video_page(
 @app.get("/publish", response_class=HTMLResponse)
 async def publish_page(request: Request):
     return templates.TemplateResponse(request, "publish.html", _i18n_ctx(request))
+
+
+@app.get("/studio", response_class=HTMLResponse)
+async def studio_page(request: Request):
+    """
+    "Студия" — управление своим каналом: доступ к видео (открытый/по
+    ссылке/ограниченный), название и описание НА ЭТОМ САЙТЕ, закреплённое
+    видео. Какой именно channel_id редактировать, страница узнаёт сама на
+    клиенте через локальный мост (GET /bridge/my_channel) — сайт этого не
+    знает и не должен: у него нет понятия "текущий пользователь", только
+    криптографические channel_id/подписи.
+    """
+    return templates.TemplateResponse(request, "studio.html", _i18n_ctx(request))
+
+
+@app.get("/channels", response_class=HTMLResponse)
+async def channels_page(request: Request):
+    """
+    Менеджер каналов — реализуется на стороне моста (управление несколькими
+    каналами/идентичностями), отдельная задача. Пока просто информационная
+    страница-заглушка.
+    """
+    return templates.TemplateResponse(request, "channels.html", _i18n_ctx(request))
+
+
+@app.get("/about", response_class=HTMLResponse)
+async def about_page(request: Request):
+    return templates.TemplateResponse(request, "about.html", _i18n_ctx(request))
+
+
+@app.get("/rules", response_class=HTMLResponse)
+async def rules_page(request: Request):
+    return templates.TemplateResponse(request, "rules.html", _i18n_ctx(request))
 
 # Модерация (remove video / ban channel) намеренно НЕ выставлена через HTTP —
 # см. scripts/moderate.py: локальный CLI-скрипт, работающий напрямую с БД на

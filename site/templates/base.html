@@ -39,19 +39,25 @@
                 </svg>
             </button>
             <div class="account-dropdown" id="account-dropdown" role="menu">
-                <a href="/channel/me" role="menuitem">{{ t('nav.my_channel') }}</a>
-                <!-- TODO: студия управления каналом (доступ к видео, название/аватар/описание, закреплённое видео) -->
-                <a href="/studio" role="menuitem">{{ t('nav.manage_channel') }}</a>
-                <!-- TODO: менеджер каналов — реализуется на стороне моста, отдельная большая задача -->
+                <!-- Реальный channel_id узнаём на клиенте через мост
+                     (GET /bridge/my_channel) — href тут просто разумный
+                     fallback, см. static/account-menu.js -->
+                <a href="/channel/me" id="nav-my-channel" role="menuitem">{{ t('nav.my_channel') }}</a>
+                <a href="/studio" role="menuitem">{{ t('nav.studio') }}</a>
+                <!-- Менеджер каналов — реализуется на стороне моста, отдельная большая задача -->
                 <a href="/channels" role="menuitem">{{ t('nav.channel_manager') }}</a>
                 <div class="menu-divider"></div>
-                <!-- TODO: открывает настройки моста через локальный запрос;
-                     мост обязан проверять, что запрос пришёл от авторизованного
-                     (сопряжённого) origin, и молча игнорировать иначе.
+                <!-- Открывает настройки моста. Сопряжение запрашивается так
+                     же, как при просмотре/публикации видео (см.
+                     static/account-menu.js); мост дополнительно проверяет,
+                     что запрос пришёл от уже сопряжённого (авторизованного)
+                     origin, прежде чем открыть окно — см.
+                     bridge/policy/authz.py:open_bridge_settings.
                      Язык, который увидит пользователь в окне настроек моста,
                      определяется настройками САМОГО МОСТА (bridge/i18n.py),
                      а не языком сайта — это две независимые настройки. -->
                 <button type="button" class="menu-item-btn" id="open-bridge-settings" role="menuitem">{{ t('nav.bridge_settings') }}</button>
+                <a href="/rules" role="menuitem">{{ t('nav.rules') }}</a>
                 <a href="/about" role="menuitem">{{ t('nav.about') }}</a>
             </div>
         </div>

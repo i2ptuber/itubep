@@ -1,0 +1,14 @@
+{% extends "base.html" %}
+{% block title %}{{ t('rules.title') }} — ITubeP{% endblock %}
+{% block content %}
+    <div class="static-page">
+        <h1>{{ t('rules.title') }}</h1>
+        <p>{{ t('rules.intro') }}</p>
+        <ul>
+            <li>{{ t('rules.item_legal') }}</li>
+            <li>{{ t('rules.item_description') }}</li>
+            <li>{{ t('rules.item_harm') }}</li>
+            <li>{{ t('rules.item_moderation') }}</li>
+        </ul>
+    </div>
+{% endblock %}

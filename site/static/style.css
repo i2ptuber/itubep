@@ -52,3 +52,45 @@ main { padding: 30px; max-width: 1100px; margin: 0 auto; }
 .account-dropdown a:hover,
 .account-dropdown .menu-item-btn:hover { background: #333; }
 .menu-divider { height: 1px; background: #333; margin: 6px 4px; }
+
+/* --- Студия / статичные страницы (about, rules, channels-заглушка) --- */
+.channel-description { color: #ccc; white-space: pre-wrap; max-width: 700px; }
+.pinned-heading { font-size: 1.05em; color: #ff9800; margin: 25px 0 10px; }
+.pinned-video-grid { margin-bottom: 30px; }
+
+.studio-section { max-width: 700px; margin-bottom: 30px; }
+.studio-section h2 { font-size: 1.1em; color: #ff9800; margin-bottom: 8px; }
+.form-hint { color: #999; font-size: 0.85em; margin: 4px 0 0; }
+.form-row { margin-bottom: 16px; }
+.form-row label { display: block; margin-bottom: 6px; font-weight: bold; }
+.form-row input[type="text"],
+.form-row textarea,
+.form-row select {
+    width: 100%; box-sizing: border-box; padding: 8px 10px;
+    border-radius: 5px; border: 1px solid #333; background: #1a1a1a; color: #eee;
+    font-family: inherit; font-size: 0.95em;
+}
+.form-row textarea { resize: vertical; min-height: 80px; }
+
+.studio-video-row {
+    display: flex; align-items: center; justify-content: space-between;
+    gap: 12px; padding: 10px 0; border-bottom: 1px solid #222;
+}
+.studio-video-row .studio-video-title { font-weight: bold; }
+.studio-video-row select { min-width: 220px; }
+
+.btn-primary {
+    padding: 9px 18px; border-radius: 5px; border: none;
+    background: #ff9800; color: #111; font-weight: bold; cursor: pointer; font-size: 0.95em;
+}
+.btn-primary:hover { background: #ffa726; }
+
+#studio-status, #my-channel-status { color: #999; margin-top: 10px; }
+
+.static-page { max-width: 700px; }
+.static-page ul { color: #ccc; line-height: 1.7; }
+.static-page a { color: #ff9800; }
+
+/* --- Главная: разделы "recent"/"random" --- */
+.feed-heading { font-size: 1.15em; color: #ff9800; margin: 0 0 14px; }
+.feed-heading:not(:first-child) { margin-top: 40px; }

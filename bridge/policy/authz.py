@@ -226,6 +226,150 @@ class BridgePolicy:
 
         return result
         
+    # --- "Мой канал" / студия / настройки моста, вызываемые из меню сайта ---
+
+    def get_my_channel_id(self, token: str) -> str | None:
+        """
+        Для кнопки "Мой канал" — отдаёт channel_id. Если публичные данные
+        канала уже закешированы в памяти или сохранены в БД — без пароля.
+        Если канал СОЗДАН, но публичные данные ещё не сохранены (типичный
+        случай для каналов, созданных до появления этой фичи — то есть до
+        первого обращения к get_or_create_channel ПОСЛЕ обновления моста),
+        один раз просит пароль, чтобы разблокировать и досохранить их —
+        дальше уже без пароля. Если канала нет вообще — None, без запросов.
+        """
+        self._authenticate(token)
+        if self._channel_identity is not None:
+            return self._channel_identity.channel_id
+        info = self.storage.get_channel_public_info()
+        if info is not None:
+            return info["channel_id"]
+        if self.storage.get_setting("channel_private_key") is None:
+            return None  # канала действительно ещё нет
+        channel = get_or_create_channel(self.storage, PublishDialogs())
+        self._channel_identity = channel
+        return channel.channel_id
+
+    def open_bridge_settings(self, token: str) -> None:
+        """
+        Для кнопки "Настройки" в меню сайта. _authenticate() выше бросает
+        PermissionDenied для любого origin, который не был явно сопряжён
+        (или был отозван/заблокирован) — http_server.py транслирует это в
+        403, и сайт должен молча игнорировать такой ответ, а не спамить
+        пользователя всплывающими окнами моста от лица непроверенного сайта.
+        """
+        self._authenticate(token)
+        self._launch_settings_window()
+
+    def _launch_settings_window(self) -> None:
+        import subprocess
+        import sys
+
+        proc = getattr(self, "_settings_proc", None)
+        if proc is not None and proc.poll() is None:
+            return  # окно уже открыто — не плодим второй процесс на клик
+
+        # cwd намеренно вычисляется от расположения ЭТОГО файла (bridge/policy/authz.py),
+        # а не берётся неявно из os.getcwd() процесса — субпроцессу нужен
+        # BRIDGE_DIR в качестве working directory, чтобы `python -m
+        # ui.settings_window` нашёл пакет ui/ (python -m ищет модуль в
+        # sys.path, куда автоматически попадает cwd). Если сервер почему-то
+        # запущен не из BRIDGE_DIR (например, systemd-юнит с другим
+        # WorkingDirectory, или ручной запуск из другого каталога), неявный
+        # os.getcwd() был бы неверным и `-m ui.settings_window` падал бы с
+        # ModuleNotFoundError без внятной причины на стороне сайта.
+        bridge_dir = Path(__file__).resolve().parent.parent
+
+        try:
+            self._settings_proc = subprocess.Popen(
+                [sys.executable, "-m", "ui.settings_window"], cwd=str(bridge_dir),
+            )
+        except OSError as e:
+            # Пробрасываем дальше как обычное исключение — middleware на
+            # стороне http_server.py (cors_middleware) поймает его,
+            # напечатает traceback в stdout/лог моста и вернёт 500 с
+            # текстом ошибки, а не тихо "ничего не произошло".
+            raise RuntimeError(f"Не удалось запустить окно настроек: {e}") from e
+
+    def studio_update(self, token: str, updates: dict) -> dict:
+        """
+        Для страницы /studio: переименование НА ЭТОМ САЙТЕ, описание,
+        закреплённое видео, доступ к отдельным видео (public/unlisted/
+        private). Подписывается тем же ключом канала, что публикация
+        видео, и отправляется на /api/channel/{id}/studio того же сайта,
+        что и запросил (см. VideoPublisher._ensure_channel_registered —
+        тот же паттерн: origin как site_base_url).
+        """
+        import time
+        import requests
+        from snark.publisher import _requests_session_for, I2P_REQUEST_TIMEOUT_SECONDS, PublishError
+
+        origin = self._authenticate(token)
+        self._confirm_if_needed(origin, "обновить студию канала")
+
+        channel = self._channel_identity
+        if channel is None:
+            channel = get_or_create_channel(self.storage, PublishDialogs())
+            self._channel_identity = channel
+
+        record = {
+            "channel_id": channel.channel_id,
+            "site_display_name": updates.get("site_display_name", ""),
+            "site_description": updates.get("site_description", ""),
+            "pinned_video_id": updates.get("pinned_video_id"),
+            "video_access": updates.get("video_access", {}),
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        record["signature"] = channel.sign(record)
+
+        try:
+            resp = _requests_session_for(origin, self.storage.get_i2p_http_proxy()).post(
+                f"{origin.rstrip('/')}/api/channel/{channel.channel_id}/studio",
+                json=record, timeout=I2P_REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as e:
+            raise PermissionDenied(f"Не удалось соединиться с сайтом для обновления студии: {e}")
+        if resp.status_code != 200:
+            raise PermissionDenied(f"Сайт отклонил обновление студии: {resp.status_code} {resp.text}")
+
+        return resp.json()
+
+    def get_studio_state(self, token: str) -> dict:
+        """
+        Для страницы /studio при загрузке: подписанный read-запрос на
+        /api/channel/{id}/studio-state (в отличие от /api/channel/{id}/videos
+        отдаёт ВСЕ видео канала, включая unlisted/private — иначе владельцу
+        нечем было бы управлять на этой странице).
+        """
+        import time
+        import requests
+        from snark.publisher import _requests_session_for, I2P_REQUEST_TIMEOUT_SECONDS
+
+        origin = self._authenticate(token)
+
+        channel = self._channel_identity
+        if channel is None:
+            channel = get_or_create_channel(self.storage, PublishDialogs())
+            self._channel_identity = channel
+
+        record = {
+            "channel_id": channel.channel_id,
+            "timestamp": str(time.time()),
+        }
+        record["signature"] = channel.sign(record)
+
+        try:
+            resp = _requests_session_for(origin, self.storage.get_i2p_http_proxy()).post(
+                f"{origin.rstrip('/')}/api/channel/{channel.channel_id}/studio-state",
+                json=record, timeout=I2P_REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as e:
+            raise PermissionDenied(f"Не удалось соединиться с сайтом для чтения студии: {e}")
+        if resp.status_code != 200:
+            raise PermissionDenied(f"Сайт отклонил чтение студии: {resp.status_code} {resp.text}")
+
+        return resp.json()
+
     def create_stream_token(self, token: str, torrent_id: int) -> tuple[str, int]:
         """
         Минтит короткоживущий scoped-токен для чтения ОДНОГО конкретного

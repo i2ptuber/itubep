@@ -203,6 +203,42 @@ def create_app(policy: BridgePolicy) -> web.Application:
 
         return web.Response(body=data, content_type="video/mp2t")
 
+    async def my_channel(request: web.Request):
+        token = _extract_token(request)
+        channel_id = policy.get_my_channel_id(token)
+        return web.json_response({"channel_id": channel_id})
+
+    async def open_settings(request: web.Request):
+        token = _extract_token(request)
+        try:
+            policy.open_bridge_settings(token)
+        except PermissionDenied:
+            raise  # -> cors_middleware -> 403, JS treats this as "not paired/authorized" and stays silent
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+        return web.json_response({"status": "ok"})
+
+    async def studio_update(request: web.Request):
+        token = _extract_token(request)
+        body = await request.json()
+        try:
+            result = policy.studio_update(token, body)
+        except PermissionDenied:
+            raise
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+        return web.json_response(result)
+
+    async def studio_state(request: web.Request):
+        token = _extract_token(request)
+        try:
+            result = policy.get_studio_state(token)
+        except PermissionDenied:
+            raise
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+        return web.json_response(result)
+
     app.router.add_post("/bridge/stream_token", stream_token)
     app.router.add_get("/bridge/playlist", playlist)
     app.router.add_get("/bridge/segment", segment)
@@ -215,6 +251,11 @@ def create_app(policy: BridgePolicy) -> web.Application:
     app.router.add_post("/bridge/seek", seek)
     app.router.add_get("/bridge/progress", progress)
     app.router.add_post("/bridge/remove", remove)
+
+    app.router.add_get("/bridge/my_channel", my_channel)
+    app.router.add_post("/bridge/open_settings", open_settings)
+    app.router.add_post("/bridge/studio/update", studio_update)
+    app.router.add_post("/bridge/studio/state", studio_state)
 
     return app
 

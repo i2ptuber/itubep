@@ -332,3 +332,23 @@ class PolicyStorage:
             (owner_origin, video_id),
         ).fetchone()
         return row[0] if row else None
+
+    # --- Публичная информация о канале (НЕ секрет — в отличие от
+    # channel_private_key, который всегда хранится зашифрованным) ---
+    # Хранится отдельно, чтобы отвечать на "какой у меня канал"
+    # (GET /bridge/my_channel) БЕЗ расшифровки приватного ключа/пароля —
+    # иначе пришлось бы спрашивать пароль на каждый клик "Мой канал" в
+    # меню сайта, что было бы избыточно навязчиво для операции, не
+    # требующей приватного ключа вообще (channel_id и так публично
+    # выводится из public_key).
+
+    def set_channel_public_info(self, channel_id: str, public_key_b64: str) -> None:
+        self.set_setting("channel_id", channel_id)
+        self.set_setting("channel_public_key", public_key_b64)
+
+    def get_channel_public_info(self) -> dict | None:
+        channel_id = self.get_setting("channel_id")
+        public_key = self.get_setting("channel_public_key")
+        if channel_id is None or public_key is None:
+            return None
+        return {"channel_id": channel_id, "public_key": public_key}

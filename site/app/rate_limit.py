@@ -93,6 +93,8 @@ DEFAULTS: dict[str, tuple[int | None, int]] = {
     "channel_register_global": (None, 3600),
     "channel_register_id": (20, 3600),
     "video_publish_id": (60, 3600),
+    "studio_update_id": (60, 3600),
+    "studio_state_id": (120, 3600),
     "video_publish_global": (None, 3600),
     "manifest_read": (1000, 60),
     "torrent_download": (1500, 60),
@@ -100,6 +102,7 @@ DEFAULTS: dict[str, tuple[int | None, int]] = {
     "channel_videos": (1000, 60),
     "channel_page": (1000, 60),
     "video_page": (1000, 60),
+    "home_feed": (1000, 60),
 }
 
 # Заполняется при старте приложения (main.py:on_startup) из БД — override'ы,

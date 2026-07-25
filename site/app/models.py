@@ -35,6 +35,20 @@ class Channel(Base):
     banned_reason: Mapped[str] = mapped_column(Text, default="")
     banned_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
 
+    # --- "Студия" (управляется владельцем канала через подписанный запрос
+    # от моста, см. /api/channel/{channel_id}/studio) ---
+    # site_display_name — переопределение имени ТОЛЬКО на этом сайте, не
+    # трогает channel_record_json/display_name (тот приходит из подписанной
+    # записи канала и синхронизируется той же записью на любом другом
+    # сайте, где канал зарегистрирован). Пусто — значит показывать
+    # display_name как есть.
+    site_display_name: Mapped[str] = mapped_column(String(200), default="")
+    site_description: Mapped[str] = mapped_column(Text, default="")
+    pinned_video_id: Mapped[str | None] = mapped_column(String(64), nullable=True)
+    # Анти-replay для studio-обновлений — независим от updated_at
+    # channel_record_json (это разные подписанные документы).
+    studio_updated_at: Mapped[str] = mapped_column(String(40), default="")
+
     videos: Mapped[list["Video"]] = relationship(back_populates="channel")
 
 
@@ -59,6 +73,14 @@ class Video(Base):
     removed: Mapped[bool] = mapped_column(default=False)
     removed_reason: Mapped[str] = mapped_column(Text, default="")
     removed_at: Mapped[datetime | None] = mapped_column(DateTime, nullable=True)
+
+    # --- Доступ, управляется владельцем канала из "Студии" ---
+    # "public" — виден в поиске, на странице канала и по прямой ссылке;
+    # "unlisted" — доступен только по прямой ссылке (video_id), скрыт из
+    # поиска и со страницы канала; "private" — не отдаётся сайтом вообще
+    # (404 всем, включая владельца — приватные видео смотрятся локально,
+    # сайт для них используется только как реестр метаданных на будущее).
+    access_level: Mapped[str] = mapped_column(String(20), default="public")
 
     channel: Mapped["Channel"] = relationship(back_populates="videos")
     chunks: Mapped[list["VideoChunk"]] = relationship(back_populates="video")

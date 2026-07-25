@@ -1,0 +1,163 @@
+{% extends "base.html" %}
+{% block title %}{{ t('studio.title') }} — ITubeP{% endblock %}
+{% block content %}
+    <h1>{{ t('studio.title') }}</h1>
+    <p id="studio-loading">{{ t('studio.loading') }}</p>
+
+    <form id="studio-form" style="display:none;">
+        <div class="studio-section">
+            <div class="form-row">
+                <label for="studio-display-name">{{ t('studio.display_name_label') }}</label>
+                <input type="text" id="studio-display-name" maxlength="200">
+                <p class="form-hint">{{ t('studio.display_name_hint') }}</p>
+            </div>
+            <div class="form-row">
+                <label for="studio-description">{{ t('studio.description_label') }}</label>
+                <textarea id="studio-description" maxlength="5000"></textarea>
+            </div>
+            <div class="form-row">
+                <label for="studio-pinned">{{ t('studio.pinned_label') }}</label>
+                <select id="studio-pinned">
+                    <option value="">{{ t('studio.pinned_none') }}</option>
+                </select>
+            </div>
+        </div>
+
+        <div class="studio-section">
+            <h2>{{ t('studio.videos_heading') }}</h2>
+            <div id="studio-videos"></div>
+        </div>
+
+        <button type="submit" class="btn-primary">{{ t('studio.save_button') }}</button>
+        <div id="studio-status"></div>
+    </form>
+
+    <p id="studio-no-channel" style="display:none;">
+        <strong>{{ t('nochannel.title') }}</strong><br>
+        {{ t('nochannel.text') }}
+    </p>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    "use strict";
+
+    var loadingEl = document.getElementById("studio-loading");
+    var formEl = document.getElementById("studio-form");
+    var noChannelEl = document.getElementById("studio-no-channel");
+    var statusEl = document.getElementById("studio-status");
+    var displayNameEl = document.getElementById("studio-display-name");
+    var descriptionEl = document.getElementById("studio-description");
+    var pinnedEl = document.getElementById("studio-pinned");
+    var videosEl = document.getElementById("studio-videos");
+
+    var ACCESS_LABELS = {
+        public: window.t("studio.access_public"),
+        unlisted: window.t("studio.access_unlisted"),
+        private: window.t("studio.access_private"),
+    };
+
+    function accessSelectHtml(videoId, currentLevel) {
+        var opts = ["public", "unlisted", "private"].map(function (level) {
+            var selected = level === currentLevel ? " selected" : "";
+            return '<option value="' + level + '"' + selected + '>' + ACCESS_LABELS[level] + "</option>";
+        }).join("");
+        return '<select data-video-id="' + videoId + '">' + opts + "</select>";
+    }
+
+    function renderState(state) {
+        displayNameEl.value = state.site_display_name || "";
+        descriptionEl.value = state.site_description || "";
+
+        pinnedEl.innerHTML = '<option value="">' + window.t("studio.pinned_none") + "</option>";
+        (state.videos || []).forEach(function (v) {
+            var opt = document.createElement("option");
+            opt.value = v.video_id;
+            opt.textContent = v.title;
+            if (v.video_id === state.pinned_video_id) opt.selected = true;
+            pinnedEl.appendChild(opt);
+        });
+
+        if (!state.videos || state.videos.length === 0) {
+            videosEl.innerHTML = '<p class="empty-state" style="margin-top:0;text-align:left;">' +
+                window.t("studio.no_videos") + "</p>";
+        } else {
+            videosEl.innerHTML = state.videos.map(function (v) {
+                return '<div class="studio-video-row">' +
+                    '<span class="studio-video-title">' + v.title + "</span>" +
+                    accessSelectHtml(v.video_id, v.access_level || "public") +
+                    "</div>";
+            }).join("");
+        }
+
+        loadingEl.style.display = "none";
+        formEl.style.display = "";
+    }
+
+    (async function () {
+        try {
+            var token = await menuGetOrCreateToken();
+            var resp = await menuBridgeFetchAuthed(
+                MENU_BRIDGE_URL + "/bridge/studio/state", { method: "POST" }, token,
+            );
+            if (!resp.ok) {
+                var errData = await resp.json().catch(function () { return {}; });
+                throw new Error(errData.error || ("bridge error (" + resp.status + ")"));
+            }
+            var state = await resp.json();
+            renderState(state);
+        } catch (err) {
+            console.error("studio:", err);
+            loadingEl.style.display = "none";
+            noChannelEl.style.display = "";
+            // Показываем и реальный текст ошибки — иначе любая проблема
+            // (сеть, баг на мосте/сайте, отменённый пейринг) выглядит для
+            // пользователя как "у вас нет канала", хотя канал может быть.
+            var errEl = document.createElement("p");
+            errEl.style.color = "#999";
+            errEl.style.fontSize = "0.85em";
+            errEl.textContent = (err && err.message) ? err.message : String(err);
+            noChannelEl.appendChild(errEl);
+        }
+    })();
+
+    formEl.addEventListener("submit", function (e) {
+        e.preventDefault();
+        statusEl.textContent = window.t("studio.status_saving");
+
+        var videoAccess = {};
+        videosEl.querySelectorAll("select[data-video-id]").forEach(function (sel) {
+            videoAccess[sel.getAttribute("data-video-id")] = sel.value;
+        });
+
+        var updates = {
+            site_display_name: displayNameEl.value,
+            site_description: descriptionEl.value,
+            pinned_video_id: pinnedEl.value || null,
+            video_access: videoAccess,
+        };
+
+        (async function () {
+            try {
+                var token = await menuGetOrCreateToken();
+                var resp = await menuBridgeFetchAuthed(
+                    MENU_BRIDGE_URL + "/bridge/studio/update",
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(updates),
+                    },
+                    token,
+                );
+                if (!resp.ok) {
+                    var data = await resp.json().catch(function () { return {}; });
+                    throw new Error(data.error || "bridge error");
+                }
+                statusEl.textContent = window.t("studio.status_saved");
+            } catch (err) {
+                statusEl.textContent = window.t("studio.status_error") + err.message;
+            }
+        })();
+    });
+});
+</script>
+{% endblock %}

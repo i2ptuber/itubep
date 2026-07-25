@@ -165,13 +165,15 @@ def get_or_create_channel(storage: PolicyStorage, dialog) -> ChannelIdentity:
 
     if existing_raw is not None:
         if is_encrypted_blob(existing_raw):
-            return _unlock_existing_channel(existing_raw, existing_name, dialog)
+            identity = _unlock_existing_channel(existing_raw, existing_name, dialog)
         else:
             # Старый формат (plaintext base64) — до этого патча ключ хранился
             # без шифрования. Мигрируем на месте: расшифровывать нечего (ключ
             # и так открыт), но сразу просим пароль и перезаписываем БД
             # зашифрованным блоком, чтобы plaintext не остался лежать дальше.
-            return _migrate_plaintext_channel(existing_raw, existing_name, storage, dialog)
+            identity = _migrate_plaintext_channel(existing_raw, existing_name, storage, dialog)
+        storage.set_channel_public_info(identity.channel_id, identity.public_key_b64)
+        return identity
 
     # Канала ещё нет — создаём, с обязательным предупреждением
     approved = dialog.show_key_warning()
@@ -192,7 +194,9 @@ def get_or_create_channel(storage: PolicyStorage, dialog) -> ChannelIdentity:
     storage.set_setting("channel_private_key", encrypt_seed(seed, password))
     storage.set_setting("channel_display_name", display_name)
 
-    return ChannelIdentity(signing_key, display_name)
+    identity = ChannelIdentity(signing_key, display_name)
+    storage.set_channel_public_info(identity.channel_id, identity.public_key_b64)
+    return identity
 
 
 def _unlock_existing_channel(encrypted_raw: str, display_name: str | None, dialog) -> ChannelIdentity:

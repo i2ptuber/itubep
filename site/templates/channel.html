@@ -1,8 +1,22 @@
 {% extends "base.html" %}
-{% block title %}{{ channel.display_name }} — ITubeP{% endblock %}
+{% block title %}{{ channel.site_display_name or channel.display_name }} — ITubeP{% endblock %}
 {% block content %}
-    <h1>{{ channel.display_name }}</h1>
+    <h1>{{ channel.site_display_name or channel.display_name }}</h1>
     <p class="channel-id">{{ channel.channel_id }}</p>
+    {% if channel.site_description %}
+        <p class="channel-description">{{ channel.site_description }}</p>
+    {% endif %}
+
+    {% if pinned_video %}
+        <h2 class="pinned-heading">{{ t('channel.pinned') }}</h2>
+        <div class="video-grid pinned-video-grid">
+            <a class="video-card" href="/video/{{ pinned_video.video_id }}">
+                <div class="video-thumb-placeholder"></div>
+                <div class="video-title">{{ pinned_video.title }}</div>
+                <div class="video-meta">{{ pinned_video.duration_seconds }} {{ t('search.sec') }} · {{ pinned_video.download_count }} {{ t('channel.downloads') }}</div>
+            </a>
+        </div>
+    {% endif %}
 
     <div class="video-grid">
         {% for v in videos %}

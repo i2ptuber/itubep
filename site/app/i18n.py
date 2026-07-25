@@ -50,18 +50,71 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "nav.search_btn": "Search",
         "nav.account_title": "Account",
         "nav.my_channel": "My channel",
-        "nav.manage_channel": "Manage channel",
+        "nav.studio": "Studio",
         "nav.channel_manager": "Channel manager",
         "nav.bridge_settings": "Bridge settings",
+        "nav.rules": "Rules",
         "nav.about": "Contacts and source code",
         "lang.switch_to": "Русский",
 
         "search.home_title": "Home",
-        "search.nothing_found": "Nothing found for “{query}”",
+        "search.nothing_found": "Nothing found for \u201c{query}\u201d",
         "search.enter_query": "Enter a search query to find videos",
         "search.sec": "sec",
+        "search.recent_heading": "Recent",
+        "search.random_heading": "Random",
+        "search.no_videos_yet": "No videos have been published on this site yet.",
 
         "channel.downloads": "downloads",
+        "channel.pinned": "Pinned",
+
+        "nochannel.title": "You don't have a channel yet",
+        "nochannel.text": "Your channel is created automatically the first time you publish a "
+                           "video, or the first time you save changes in the Studio.",
+
+        "studio.title": "Studio",
+        "studio.loading": "Connecting to the bridge...",
+        "studio.display_name_label": "Channel name on this site",
+        "studio.display_name_hint": "Overrides the display name only on this site; doesn't change "
+                                      "the channel record itself.",
+        "studio.description_label": "Channel description",
+        "studio.pinned_label": "Pinned video",
+        "studio.pinned_none": "\u2014 none \u2014",
+        "studio.videos_heading": "Your videos",
+        "studio.access_label": "Access",
+        "studio.access_public": "Public",
+        "studio.access_unlisted": "Unlisted (link only)",
+        "studio.access_private": "Private (not served by the site)",
+        "studio.save_button": "Save changes",
+        "studio.status_saving": "Saving...",
+        "studio.status_saved": "Saved",
+        "studio.status_error": "Error: ",
+        "studio.no_videos": "No published videos yet.",
+        "studio.error_pairing": "Failed to pair with the bridge",
+
+        "channels.title": "Channel manager",
+        "channels.text": "The channel manager (switching between and managing several channels/"
+                          "identities) is implemented on the bridge side and is coming in a future "
+                          "update.",
+
+        "about.title": "Contacts and source code",
+        "about.source_heading": "Source code",
+        "about.source_text": "ITubeP is free software. Site and bridge source code, issues, and "
+                              "pull requests:",
+        "about.contact_heading": "Contact",
+        "about.contact_text": "Bug reports, ideas, and pull requests are welcome via the project "
+                               "repository above.",
+
+        "rules.title": "Content rules",
+        "rules.intro": "Guidelines for publishing on this site — video and channel titles, "
+                        "descriptions, and general content rules.",
+        "rules.item_legal": "Content must not violate the laws applicable to the site operator.",
+        "rules.item_description": "Descriptions should be relevant to the video — no unrelated "
+                                    "spam, repeated mass keyword stuffing and links to illegal materials.",
+        "rules.item_harm": "No content that promotes violence or clearly illegal "
+                            "activity.",
+        "rules.item_moderation": "Violations may result in a video being removed or a channel "
+                                  "being banned by the site operator.",
 
         "publish.title": "Publish a video",
         "publish.description": "Publishing is done through the local ITubeP Bridge — several "
@@ -111,9 +164,10 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "nav.search_btn": "Найти",
         "nav.account_title": "Аккаунт",
         "nav.my_channel": "Мой канал",
-        "nav.manage_channel": "Управление каналом",
+        "nav.studio": "Студия",
         "nav.channel_manager": "Менеджер каналов",
         "nav.bridge_settings": "Настройки",
+        "nav.rules": "Правила",
         "nav.about": "Контакты и исходный код",
         "lang.switch_to": "English",
 
@@ -121,8 +175,60 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "search.nothing_found": "Ничего не найдено по запросу «{query}»",
         "search.enter_query": "Введите запрос для поиска видео",
         "search.sec": "сек",
+        "search.recent_heading": "Недавние",
+        "search.random_heading": "Случайные",
+        "search.no_videos_yet": "На сайте пока не опубликовано ни одного видео.",
 
         "channel.downloads": "скачиваний",
+        "channel.pinned": "Закреплено",
+
+        "nochannel.title": "У вас пока нет канала",
+        "nochannel.text": "Канал создаётся автоматически при первой публикации видео, либо при "
+                           "первом сохранении изменений в Студии.",
+
+        "studio.title": "Студия",
+        "studio.loading": "Соединение с мостом...",
+        "studio.display_name_label": "Название канала на этом сайте",
+        "studio.display_name_hint": "Переопределяет отображаемое имя только на этом сайте, не "
+                                      "меняет саму запись канала.",
+        "studio.description_label": "Описание канала",
+        "studio.pinned_label": "Закреплённое видео",
+        "studio.pinned_none": "— нет —",
+        "studio.videos_heading": "Ваши видео",
+        "studio.access_label": "Доступ",
+        "studio.access_public": "Открытый",
+        "studio.access_unlisted": "По ссылке",
+        "studio.access_private": "Ограниченный (не отдаётся сайтом)",
+        "studio.save_button": "Сохранить изменения",
+        "studio.status_saving": "Сохранение...",
+        "studio.status_saved": "Сохранено",
+        "studio.status_error": "Ошибка: ",
+        "studio.no_videos": "Опубликованных видео пока нет.",
+        "studio.error_pairing": "Не удалось сопрячься с мостом",
+
+        "channels.title": "Менеджер каналов",
+        "channels.text": "Менеджер каналов (переключение между несколькими каналами/личностями "
+                          "и управление ими) реализуется на стороне моста и появится в одном из "
+                          "следующих обновлений.",
+
+        "about.title": "Контакты и исходный код",
+        "about.source_heading": "Исходный код",
+        "about.source_text": "ITubeP — свободное ПО. Код сайта и моста, "
+                              "баг-репорты и пул-реквесты:",
+        "about.contact_heading": "Контакты",
+        "about.contact_text": "Багрепорты, идеи и пул-реквесты приветствуются через репозиторий "
+                               "проекта выше.",
+
+        "rules.title": "Правила публикации",
+        "rules.intro": "Правила публикации на этом сайте — названия видео и каналов, описания "
+                        "под видео и общие правила по контенту.",
+        "rules.item_legal": "Контент не должен нарушать законодательство, применимое к оператору сайта.",
+        "rules.item_description": "Описания должны относиться к видео — без постороннего спама, "
+                                    "массового повторения ключевых слов и ссылок на незаконные материалы.",
+        "rules.item_harm": "Запрещён контент, пропагандирующий насилие или явно "
+                            "незаконную деятельность.",
+        "rules.item_moderation": "Нарушения могут привести к удалению видео или блокировке канала "
+                                  "держателем сайта.",
 
         "publish.title": "Опубликовать видео",
         "publish.description": "Публикация выполняется через локальный ITubeP Bridge — откроется "
