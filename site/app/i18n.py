@@ -99,7 +99,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
 
         "about.title": "Contacts and source code",
         "about.source_heading": "Source code",
-        "about.source_text": "ITubeP is open source. Site and bridge source code, issues, and "
+        "about.source_text": "ITubeP is free software. Site and bridge source code, issues, and "
                               "pull requests:",
         "about.contact_heading": "Contact",
         "about.contact_text": "Bug reports, ideas, and pull requests are welcome via the project "
@@ -109,14 +109,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "rules.intro": "Guidelines for publishing on this site — video and channel titles, "
                         "descriptions, and general content rules.",
         "rules.item_legal": "Content must not violate the laws applicable to the site operator.",
-        "rules.item_naming": "Video and channel titles must accurately describe their content — "
-                              "no misleading clickbait titles or thumbnails-in-text.",
         "rules.item_description": "Descriptions should be relevant to the video — no unrelated "
-                                    "spam, link farms, or repeated mass keyword stuffing.",
-        "rules.item_harm": "No content that promotes violence, harassment, or clearly illegal "
+                                    "spam, repeated mass keyword stuffing or links to illegal materials.",
+        "rules.item_harm": "No content that promotes violence, or clearly illegal "
                             "activity.",
         "rules.item_moderation": "Violations may result in a video being removed or a channel "
-                                  "being banned by the site operator (see README, scripts/moderate.py).",
+                                  "being banned by the site operator.",
 
         "publish.title": "Publish a video",
         "publish.description": "Publishing is done through the local ITubeP Bridge — several "
@@ -233,14 +231,12 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "rules.intro": "Правила публикации на этом сайте — названия видео и каналов, описания "
                         "под видео и общие правила по контенту.",
         "rules.item_legal": "Контент не должен нарушать законодательство, применимое к оператору сайта.",
-        "rules.item_naming": "Названия видео и каналов должны точно описывать содержание — "
-                              "без вводящих в заблуждение кликбейт-заголовков и текста на превью.",
         "rules.item_description": "Описания должны относиться к видео — без постороннего спама, "
-                                    "ссылочных ферм и массового повторения ключевых слов.",
-        "rules.item_harm": "Запрещён контент, пропагандирующий насилие, травлю или явно "
+                                    "массового повторения ключевых слов и ссылок на незаконные материалы.",
+        "rules.item_harm": "Запрещён контент, пропагандирующий насилие, или явно "
                             "незаконную деятельность.",
         "rules.item_moderation": "Нарушения могут привести к удалению видео или блокировке канала "
-                                  "держателем сайта (см. README, scripts/moderate.py).",
+                                  "держателем сайта.",
 
         "publish.title": "Опубликовать видео",
         "publish.description": "Публикация выполняется через локальный ITubeP Bridge — откроется "
