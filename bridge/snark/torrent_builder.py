@@ -17,6 +17,7 @@ from __future__ import annotations
 
 import hashlib
 import os
+import re
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -81,6 +82,138 @@ class TorrentFile:
     """Один файл в multi-file торренте — соответствует одному HLS-сегменту."""
     path: Path          # реальный путь на диске (для чтения содержимого)
     torrent_path: list[str]  # путь внутри торрента, напр. ["segment_0000.m4s"]
+
+
+class UntrustedTorrentError(Exception):
+    """
+    .torrent, присланный сайтом через /bridge/add, не проходит проверку
+    на "похож на видео, которое мы сами могли бы опубликовать" — см.
+    validate_video_torrent(). НЕ добавляется в i2psnark ни при каких
+    условиях, если это исключение брошено.
+    """
+
+
+# Формат имени файла сегмента, который сам мост использует при публикации
+# (см. build_torrent_with_hash / snark/publisher.py:segment_video_ffmpeg —
+# "segment_%04d.ts"). Любой .torrent, добавляемый через /bridge/add,
+# ДОЛЖЕН состоять целиком из файлов такого вида — иначе это не "видео от
+# ITubeP", а произвольный контент, который сайт пытается заставить мост
+# скачать и раздавать (см. audit — было критичной находкой).
+_SEGMENT_FILENAME_RE = re.compile(r"^segment_\d{4}\.ts$")
+
+
+def validate_video_torrent(
+    torrent_bytes: bytes,
+    expected_torrent_name: str,
+    max_total_size_bytes: int,
+    max_files: int,
+) -> None:
+    """
+    Проверяет .torrent, присланный сайтом (base64 в /bridge/add), ДО того,
+    как он будет передан в i2psnark на скачивание/раздачу. Мост раньше
+    принимал сюда абсолютно любой валидный .torrent-файл с любым
+    содержимым (любые имена файлов, любой размер, любые встроенные
+    трекеры) — то есть сопряжённый сайт мог тихо (в Mode.SILENT) заставить
+    мост скачивать и сидировать произвольный контент, выбранный сайтом, а
+    не то, что показывает плеер. Эта функция сужает принимаемые торренты
+    до формы, которую сам мост способен породить при публикации:
+    multi-file, все файлы — "segment_NNNN.ts" без вложенных директорий,
+    имя торрента совпадает с video_id (sha256-хэш), в разумных пределах
+    по числу файлов и суммарному размеру.
+
+    Бросает UntrustedTorrentError с человекочитаемой причиной, если
+    торрент не проходит — вызывающий код (integration.py) должен
+    пробрасывать это как есть, НЕ пытаться "починить" или частично принять.
+    """
+    try:
+        decoded, rest = bdecode(torrent_bytes)
+    except Exception as e:
+        raise UntrustedTorrentError(f"не удалось разобрать .torrent (bencode): {e}") from e
+    if rest:
+        raise UntrustedTorrentError("лишние данные после info-словаря .torrent")
+    if not isinstance(decoded, dict):
+        raise UntrustedTorrentError(".torrent верхнего уровня — не словарь")
+
+    info = decoded.get("info")
+    if not isinstance(info, dict):
+        raise UntrustedTorrentError("отсутствует или некорректен info-словарь")
+
+    name = info.get("name")
+    name = name.decode("utf-8", errors="replace") if isinstance(name, bytes) else name
+    if name != expected_torrent_name:
+        raise UntrustedTorrentError(
+            f"info.name торрента ({name!r}) не совпадает с ожидаемым "
+            f"video_id ({expected_torrent_name!r}) — торрент не тот, "
+            f"который сайт заявил"
+        )
+
+    # Одно-файловые торренты (ключ "length" прямо в info, без "files") у
+    # нашей схемы публикации не встречаются — все видео это multi-file
+    # (список HLS-сегментов). Отказ — не пытаемся поддержать формат,
+    # которого сам мост никогда не производит.
+    files = info.get("files")
+    if not isinstance(files, list) or not files:
+        raise UntrustedTorrentError(
+            "торрент не multi-file (нет info.files) — не похож на видео, "
+            "опубликованное через ITubeP"
+        )
+
+    if len(files) > max_files:
+        raise UntrustedTorrentError(
+            f"торрент содержит {len(files)} файлов, лимит {max_files} "
+            f"(см. настройки моста)"
+        )
+
+    total_size = 0
+    for f in files:
+        if not isinstance(f, dict):
+            raise UntrustedTorrentError("некорректная запись в info.files")
+        length = f.get("length")
+        if not isinstance(length, int) or length < 0:
+            raise UntrustedTorrentError("некорректная длина файла в info.files")
+        total_size += length
+
+        path_parts = f.get("path")
+        if not isinstance(path_parts, list) or len(path_parts) != 1:
+            # Ровно один компонент пути — файлы сегментов лежат плоско,
+            # без вложенных директорий. Больше одного компонента —
+            # потенциальный path traversal внутри директории торрента на
+            # стороне i2psnark, чего наша схема никогда не производит.
+            raise UntrustedTorrentError(
+                "файл торрента не в корне (вложенные пути не поддерживаются "
+                "схемой видео-сегментов)"
+            )
+        part = path_parts[0]
+        part = part.decode("utf-8", errors="replace") if isinstance(part, bytes) else part
+        if not isinstance(part, str) or not _SEGMENT_FILENAME_RE.match(part):
+            raise UntrustedTorrentError(
+                f"имя файла в торренте ({part!r}) не соответствует схеме "
+                f"'segment_NNNN.ts' — торрент содержит нечто, что не "
+                f"является HLS-сегментом от ITubeP"
+            )
+
+    if total_size > max_total_size_bytes:
+        raise UntrustedTorrentError(
+            f"суммарный размер торрента {total_size} байт превышает лимит "
+            f"{max_total_size_bytes} байт (см. настройки моста)"
+        )
+
+    piece_length = info.get("piece length")
+    if not isinstance(piece_length, int) or piece_length <= 0:
+        raise UntrustedTorrentError("некорректный piece length")
+
+    pieces = info.get("pieces")
+    if not isinstance(pieces, bytes) or len(pieces) % 20 != 0:
+        raise UntrustedTorrentError("некорректное поле pieces (не кратно 20 байтам SHA1)")
+
+    expected_piece_count = (total_size + piece_length - 1) // piece_length if total_size else 0
+    actual_piece_count = len(pieces) // 20
+    if actual_piece_count != expected_piece_count:
+        raise UntrustedTorrentError(
+            f"число pieces ({actual_piece_count}) не соответствует "
+            f"total_size/piece_length ({expected_piece_count}) — "
+            f"похоже на подделанные метаданные"
+        )
 
 
 def build_torrent(

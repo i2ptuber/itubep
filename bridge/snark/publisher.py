@@ -24,6 +24,7 @@ from urllib.parse import urlparse
 from .torrent_builder import TorrentFile, build_torrent_with_hash
 from .integration import SnarkIntegration
 from policy.crypto_utils import ChannelIdentity, canonical_json_for_id
+from policy.origin_validation import is_i2p_host, _DEV_HOSTS
 from .integration import VideoTorrentHandle
 
 log = logging.getLogger(__name__)
@@ -48,13 +49,24 @@ def _requests_session_for(url: str, http_proxy: str | None) -> requests.Session:
     .i2p-домены напрямую (это не DNS), их обязательно нужно вести через
     HTTP-прокси роутера (i2pd/Java I2P слушает его обычно на 127.0.0.1:4444).
 
-    Для localhost/127.0.0.1 (локальное тестирование, как раньше) прокси не
-    используется — иначе локальная разработка сломалась бы, если у человека
-    вообще нет запущенного I2P-роутера на машине.
+    Для localhost/127.0.0.1 (локальное тестирование) прокси не используется —
+    иначе локальная разработка сломалась бы, если у человека вообще нет
+    запущенного I2P-роутера на машине.
+
+    КРИТИЧНО (было исправлено): для ЛЮБОГО другого хоста — то есть НЕ .i2p
+    и НЕ localhost/127.0.0.1 — раньше запрос уходил напрямую, в обход
+    I2P-прокси, с реальным IP-адресом машины пользователя в качестве
+    источника соединения. Это деанонимизировало пользователя, если origin
+    (прошедший валидацию сопряжения или нет — этот модуль не должен на неё
+    полагаться) вдруг оказывался внешним clearnet-хостом. Теперь для любого
+    хоста вне allowlist'а (.i2p / localhost) мы ОТКАЗЫВАЕМ в запросе, а не
+    отправляем его напрямую — это единственный безопасный дефолт для сети,
+    само существование которой основано на анонимности.
     """
     session = requests.Session()
-    host = urlparse(url).hostname or ""
-    if host.endswith(".i2p"):
+    host = (urlparse(url).hostname or "").lower()
+
+    if is_i2p_host(host):
         if not http_proxy:
             raise PublishError(
                 f"Адрес сайта ({url}) — .i2p-домен, но HTTP-прокси I2P не "
@@ -62,7 +74,17 @@ def _requests_session_for(url: str, http_proxy: str | None) -> requests.Session:
                 f"достучаться до сайта."
             )
         session.proxies = {"http": http_proxy, "https": http_proxy}
-    return session
+        return session
+
+    if host in _DEV_HOSTS:
+        return session
+
+    raise PublishError(
+        f"Отказ отправлять запрос на {url!r}: это не .i2p-адрес и не "
+        f"localhost. Отправка напрямую раскрыла бы реальный IP-адрес "
+        f"пользователя в обход I2P — такой запрос никогда не выполняется, "
+        f"независимо от того, как сайт был сопряжён с мостом."
+    )
 
 
 def segment_video_ffmpeg(

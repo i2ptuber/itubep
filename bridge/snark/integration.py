@@ -19,7 +19,7 @@ from dataclasses import dataclass
 from pathlib import Path
 
 from .rpc_client import RPCClient
-from .torrent_builder import TorrentFile
+from .torrent_builder import TorrentFile, validate_video_torrent, UntrustedTorrentError
 from .web_client import I2PSnarkWebClient, TorrentMustBeStoppedError
 
 log = logging.getLogger(__name__)
@@ -47,10 +47,18 @@ class SnarkIntegration:
         stop_wait_timeout: float = 10.0,
         storage_dir_provider=None,
         trackers: list[str] | None = None,
+        max_torrent_bytes: int = 20 * 1024**3,
+        max_torrent_files: int = 20000,
     ):
         self.rpc = RPCClient(rpc_url)
         self.web = I2PSnarkWebClient(web_url)
         self.stop_wait_timeout = stop_wait_timeout
+        # Лимиты на содержимое .torrent, принимаемого через add_video_for_playback
+        # (см. validate_video_torrent в torrent_builder.py) — настраиваются
+        # через PolicyStorage.get_max_video_torrent_bytes/files, значения
+        # здесь — дефолты на случай явного создания без storage (тесты и т.п.).
+        self.max_torrent_bytes = max_torrent_bytes
+        self.max_torrent_files = max_torrent_files
         # Список announce-URL живых I2P-трекеров, добавляемых в каждый
         # публикуемый .torrent (см. torrent_builder.build_torrent_with_hash).
         # Задаётся из настроек моста (обычно — копия того, что уже настроено
@@ -137,6 +145,24 @@ class SnarkIntegration:
         self, torrent_bytes: bytes, expected_torrent_name: str, enable_sequential: bool = True,
     ) -> VideoTorrentHandle:
         self._validate_video_id(expected_torrent_name)
+
+        # КРИТИЧНО (было исправлено): раньше torrent_bytes передавались в
+        # i2psnark БЕЗ какой-либо проверки содержимого — сопряжённый сайт
+        # мог прислать сюда произвольный .torrent (любые файлы, любой
+        # объём, произвольные встроенные трекеры), и мост тихо (в
+        # Mode.SILENT) начинал его скачивать и раздавать. validate_video_torrent
+        # ограничивает принимаемые торренты формой, которую сам мост
+        # способен породить при публикации: multi-file, только
+        # "segment_NNNN.ts" в корне, имя торрента равно video_id, разумные
+        # пределы по числу файлов/суммарному размеру. Бросает
+        # UntrustedTorrentError — вызывающий код (authz.py) транслирует это
+        # в понятную ошибку для сайта, до i2psnark запрос не доходит.
+        validate_video_torrent(
+            torrent_bytes, expected_torrent_name,
+            max_total_size_bytes=self.max_torrent_bytes,
+            max_files=self.max_torrent_files,
+        )
+
         added = self.rpc.torrent_add_bytes(torrent_bytes, paused=True)
         torrent_id = added["id"]
         torrent_name = expected_torrent_name

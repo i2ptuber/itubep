@@ -42,6 +42,16 @@ class StudioUpdateRequest(BaseModel):
     pinned_video_id: str | None = None
     video_access: dict[str, str] = Field(default_factory=dict)
     updated_at: str
+    # audience_origin: адрес сайта, для которого мост подписал эту запись
+    # (см. bridge/policy/authz.py). Часть ПОДПИСАННЫХ данных — сайт
+    # обязан сверить это со СВОИМ собственным адресом (см. main.py:
+    # _require_audience_matches_this_site) и отклонить запрос, если
+    # запись была подписана "для" другого сайта. Без этого поля подпись
+    # была бы переносима между любыми сайтами, знающими тот же
+    # channel_id — что позволяло бы одному (в т.ч. недобросовестному)
+    # сайту получить от моста подписанную запись и реплеить её на ДРУГОЙ,
+    # настоящий сайт жертвы.
+    audience_origin: str = Field(..., min_length=1)
     signature: str = Field(..., min_length=1)
         
 class QualityManifest(BaseModel):
@@ -104,6 +114,7 @@ class StudioAuthRequest(BaseModel):
     """
     channel_id: str = Field(..., min_length=1, max_length=64)
     timestamp: str
+    audience_origin: str = Field(..., min_length=1)  # см. StudioUpdateRequest
     signature: str = Field(..., min_length=1)
 
 
@@ -126,6 +137,7 @@ class ReactionRequest(BaseModel):
     channel_id: str = Field(..., min_length=1, max_length=64)
     value: int = Field(..., ge=-1, le=1)
     updated_at: str
+    audience_origin: str = Field(..., min_length=1)  # см. StudioUpdateRequest
     signature: str = Field(..., min_length=1)
 
     @field_validator("value")
@@ -160,6 +172,7 @@ class CommentCreateRequest(BaseModel):
     body: str = Field(..., min_length=1, max_length=10000)
     client_nonce: str = Field(..., min_length=8, max_length=64)
     created_at: str
+    audience_origin: str = Field(..., min_length=1)  # см. StudioUpdateRequest
     signature: str = Field(..., min_length=1)
 
     @field_validator("body")

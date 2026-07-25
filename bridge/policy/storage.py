@@ -325,7 +325,33 @@ class PolicyStorage:
 
     def set_snark_storage_dir(self, path: str):
         self.set_setting("snark_storage_dir", path)
-        
+
+    def get_max_video_torrent_bytes(self) -> int:
+        """
+        Верхний предел суммарного размера торрента, который мост согласится
+        добавить в i2psnark по запросу сайта (/bridge/add — см.
+        snark/torrent_builder.py:validate_video_torrent). Защита от того,
+        что сопряжённый сайт заставит мост скачивать/раздавать что-то
+        гораздо большее, чем разумное видео, забивая диск пользователя.
+        20 GiB — с большим запасом на длинное видео в высоком качестве,
+        но не "без ограничений".
+        """
+        return int(self.get_setting("max_video_torrent_bytes", str(20 * 1024**3)))
+
+    def set_max_video_torrent_bytes(self, value: int):
+        self.set_setting("max_video_torrent_bytes", str(value))
+
+    def get_max_video_torrent_files(self) -> int:
+        """
+        Верхний предел числа файлов (HLS-сегментов) в добавляемом торренте.
+        При 3-секундных сегментах 20000 файлов — это even at ~16.6 часов
+        видео, разумный запас для одного ролика.
+        """
+        return int(self.get_setting("max_video_torrent_files", "20000"))
+
+    def set_max_video_torrent_files(self, value: int):
+        self.set_setting("max_video_torrent_files", str(value))
+
     def find_torrent_for_video(self, owner_origin: str, video_id: str) -> int | None:
         row = self.conn.execute(
             "SELECT torrent_id FROM torrent_ownership WHERE owner_origin = ? AND video_id = ?",

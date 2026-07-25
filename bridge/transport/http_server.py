@@ -14,6 +14,7 @@ import asyncio
 from aiohttp import web
 
 from policy.authz import BridgePolicy, PermissionDenied
+from policy.origin_validation import is_valid_pairing_origin
 from i18n import t
 
 BRIDGE_HOST = "127.0.0.1"
@@ -28,6 +29,16 @@ def _extract_token(request: web.Request) -> str:
 
 
 def _cors_headers(origin: str) -> dict:
+    # КРИТИЧНО (было исправлено): раньше эти заголовки безусловно
+    # отражали ЛЮБОЙ присланный Origin, включая произвольные clearnet-
+    # страницы — то есть браузер разрешал ЛЮБОЙ веб-странице (не только
+    # i2p-сайтам) выполнять preflight и запросы к 127.0.0.1:9080, включая
+    # /bridge/pair/request. Теперь CORS/PNA-заголовки выдаются, только
+    # если origin похож на настоящий I2P-адрес (см. origin_validation.py) —
+    # для всего остального браузер сам заблокирует запрос как cross-origin,
+    # это происходит ДО того, как запрос вообще доходит до BridgePolicy.
+    if not is_valid_pairing_origin(origin):
+        return {}
     return {
         "Access-Control-Allow-Origin": origin,
         "Access-Control-Allow-Methods": "GET, POST, OPTIONS",
@@ -72,6 +83,12 @@ def create_app(policy: BridgePolicy) -> web.Application:
         origin = request.headers.get("Origin", "")
         if not origin:
             return web.json_response({"error": "missing Origin header"}, status=400)
+        # Быстрый отказ на транспортном уровне ещё до похода в BridgePolicy —
+        # тот же барьер продублирован и там (pairing.py), т.к. Слой 2 не
+        # должен полагаться на то, что Слой 1 уже отфильтровал вход. Здесь
+        # это просто экономит поход в БД/поток диалога для явного мусора.
+        if not is_valid_pairing_origin(origin):
+            return web.json_response({"error": "origin must be an .i2p address"}, status=400)
         result = policy.request_pairing(origin)
         return web.json_response(result)
 

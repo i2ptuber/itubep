@@ -13,6 +13,7 @@ from enum import Enum
 from pathlib import Path
 
 from snark import SnarkIntegration, VideoTorrentHandle
+from snark.torrent_builder import UntrustedTorrentError
 
 from ui.tkinter_dialog import TkinterPairingDialog
 from .pairing import PairingManager
@@ -36,7 +37,19 @@ class BridgePolicy:
         storage: PolicyStorage | None = None,
         dialog: TkinterPairingDialog | None = None,
         snark: SnarkIntegration | None = None,
-        mode: Mode = Mode.SILENT,
+        # КРИТИЧНО (было исправлено): дефолт был Mode.SILENT — единственное
+        # подтверждение пользователя во всём протоколе происходило один раз,
+        # на этапе самого сопряжения. После этого react/comment/
+        # studio_update/add_torrent/remove_torrent выполнялись ПОЛНОСТЬЮ
+        # тихо для уже сопряжённого origin. В сочетании с тем, что
+        # react/comment/studio_update — это, по сути, "подпишите что угодно
+        # моим ключом канала", один клик "Разрешить" на сопряжении фактически
+        # выдавал сайту бессрочное тихое право действовать от имени личности
+        # пользователя и скачивать произвольные торренты. Mode.CONFIRM —
+        # безопасный дефолт "по умолчанию спрашивать"; пользователь может
+        # осознанно переключиться на SILENT в настройках моста для сайтов,
+        # которым действительно доверяет.
+        mode: Mode = Mode.CONFIRM,
     ):
         self.storage = storage or PolicyStorage()
         self.dialog = dialog or TkinterPairingDialog()
@@ -44,6 +57,8 @@ class BridgePolicy:
         self.snark = snark or SnarkIntegration(
             storage_dir_provider=self.storage.get_snark_storage_dir,
             trackers=self.storage.get_trackers(),
+            max_torrent_bytes=self.storage.get_max_video_torrent_bytes(),
+            max_torrent_files=self.storage.get_max_video_torrent_files(),
         )
         # mode больше не хранится как простое поле — читается из БД при каждом
         # обращении, чтобы окно настроек (отдельный процесс) могло его менять
@@ -137,7 +152,13 @@ class BridgePolicy:
 
         self._confirm_if_needed(origin, f"добавить видео {video_id}")
 
-        handle = self.snark.add_video_for_playback(torrent_bytes, expected_torrent_name)
+        try:
+            handle = self.snark.add_video_for_playback(torrent_bytes, expected_torrent_name)
+        except UntrustedTorrentError as e:
+            # Сайт прислал .torrent, не похожий на то, что могло бы быть
+            # опубликовано через ITubeP (см. torrent_builder.validate_video_torrent)
+            # — явный отказ с понятной причиной, а не общий 500.
+            raise PermissionDenied(f"Торрент отклонён: {e}")
         self.storage.register_torrent(handle.torrent_id, origin, video_id)
         self._handles[handle.torrent_id] = handle
         return handle
@@ -319,6 +340,11 @@ class BridgePolicy:
             "pinned_video_id": updates.get("pinned_video_id"),
             "video_access": updates.get("video_access", {}),
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            # См. react_to_video выше — привязка подписи к конкретному сайту.
+            # Особенно важно здесь: без этого чужой сайт мог бы получить
+            # подпись под studio-обновлением (например, "спрятать все видео")
+            # и применить её к НАСТОЯЩЕМУ каналу жертвы на другом сайте.
+            "audience_origin": origin,
         }
         record["signature"] = channel.sign(record)
 
@@ -355,6 +381,16 @@ class BridgePolicy:
         record = {
             "channel_id": channel.channel_id,
             "timestamp": str(time.time()),
+            # См. react_to_video выше — привязка подписи к конкретному сайту.
+            # Здесь это важно и для приватности: без привязки чужой сайт мог
+            # бы этим же вызовом заставить мост подписать read-запрос и
+            # получить (переслав его на настоящий сайт от своего имени —
+            # впрочем этого недостаточно, ответ идёт мосту, а не ему;
+            # тем не менее сама подпись — чувствительный артефакт, который
+            # не должен быть переносим) состояние студии, включая
+            # unlisted/private видео, если бы смог подставить этот запрос
+            # где-то ещё.
+            "audience_origin": origin,
         }
         record["signature"] = channel.sign(record)
 
@@ -400,6 +436,16 @@ class BridgePolicy:
             # бы неверно для голосов, отправленных в быстрой последовательности.
             "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
                           + f".{int((time.time() % 1) * 1_000_000):06d}Z",
+            # КРИТИЧНО: audience_origin — сайт, ДЛЯ которого мы подписываем
+            # эту запись (тот же origin, на который она будет отправлена
+            # ниже). Входит в подписываемые данные (canonical_json), поэтому
+            # сайт-получатель может отвергнуть запись, подписанную "для"
+            # другого сайта, и её нельзя реплеить на другой сайт без
+            # пересборки подписи — то есть без ключа канала. Без этого поля
+            # ЛЮБОЙ сопряжённый сайт мог бы через этот же вызов получить от
+            # моста валидную подпись голоса и переиспользовать её напрямую
+            # против настоящего сайта жертвы.
+            "audience_origin": origin,
         }
         record["signature"] = channel.sign(record)
 
@@ -442,6 +488,9 @@ class BridgePolicy:
             "body": body,
             "client_nonce": secrets.token_hex(16),
             "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            # См. пояснение к audience_origin в react_to_video выше — тот же
+            # смысл: привязка подписи к конкретному сайту-адресату.
+            "audience_origin": origin,
         }
         record["signature"] = channel.sign(record)
 

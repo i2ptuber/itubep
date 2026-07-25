@@ -31,6 +31,49 @@ templates = Jinja2Templates(directory="templates")
 app.mount("/static", StaticFiles(directory="static"), name="static")
 
 
+import os
+
+# Собственный .i2p-адрес ЭТОГО сайта — обязателен для проверки поля
+# audience_origin в подписанных записях (react/comment/studio). Оператор
+# сайта задаёт его через переменную окружения при запуске (тот же адрес,
+# что выдаёт i2p-роутер для этого eepsite). Без него сайт не может
+# отличить "запись, подписанная мостом ИМЕННО для меня" от записи,
+# подписанной для чужого сайта и просто реплеенной сюда, — см.
+# _require_audience_matches_this_site ниже.
+SITE_ORIGIN = os.environ.get("ITUBEP_SITE_ORIGIN", "").rstrip("/")
+
+if not SITE_ORIGIN:
+    import logging
+    logging.getLogger(__name__).warning(
+        "ITUBEP_SITE_ORIGIN не задан — проверка audience_origin для "
+        "подписанных запросов (react/comment/studio) будет ОТКЛОНЯТЬ "
+        "ВСЕ такие запросы, пока переменная окружения не установлена в "
+        "реальный .i2p-адрес этого сайта. Это осознанный fail-closed "
+        "дефолт: лучше сайт временно не принимает реакции/комментарии, "
+        "чем принимает записи, подписанные для другого сайта."
+    )
+
+
+def _require_audience_matches_this_site(record: dict) -> None:
+    """
+    Проверяет, что подписанная запись (react/comment/studio-update/
+    studio-state) была подписана мостом ИМЕННО для этого сайта, а не для
+    какого-то другого — иначе недобросовестный/скомпрометированный сайт,
+    единожды сопряжённый с мостом жертвы, мог бы получить от него валидную
+    подпись произвольного содержимого (см. bridge/policy/authz.py) и
+    реплеить её напрямую на РЕАЛЬНЫЙ сайт жертвы, подделывая её лайки/
+    комментарии/студийные настройки. audience_origin — часть подписанных
+    данных (входит в canonical_json), поэтому подделать его без пересборки
+    подписи невозможно.
+    """
+    audience = record.get("audience_origin", "")
+    if not SITE_ORIGIN or audience != SITE_ORIGIN:
+        raise HTTPException(
+            status_code=403,
+            detail="audience_origin записи не совпадает с адресом этого сайта",
+        )
+
+
 @app.on_event("startup")
 async def on_startup():
     await init_models()  # прототип-режим — в проде заменить на Alembic
@@ -144,6 +187,7 @@ async def studio_update(
 
     if not verify_signature(req.model_dump(), channel.public_key):
         raise HTTPException(status_code=400, detail="Invalid signature")
+    _require_audience_matches_this_site(req.model_dump())
 
     if req.updated_at <= channel.studio_updated_at:
         raise HTTPException(
@@ -211,6 +255,7 @@ async def studio_state(
 
     if not verify_signature(req.model_dump(), channel.public_key):
         raise HTTPException(status_code=400, detail="Invalid signature")
+    _require_audience_matches_this_site(req.model_dump())
 
     try:
         ts = float(req.timestamp)
@@ -278,6 +323,7 @@ async def react_to_video(
 
     if not verify_signature(req.model_dump(), channel.public_key):
         raise HTTPException(status_code=400, detail="Invalid signature")
+    _require_audience_matches_this_site(req.model_dump())
 
     existing_result = await session.execute(
         select(VideoReaction).where(
@@ -394,6 +440,7 @@ async def post_comment(
 
     if not verify_signature(req.model_dump(), channel.public_key):
         raise HTTPException(status_code=400, detail="Invalid signature")
+    _require_audience_matches_this_site(req.model_dump())
 
     existing_nonce = await session.execute(
         select(Comment).where(Comment.client_nonce == req.client_nonce)

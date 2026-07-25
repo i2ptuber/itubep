@@ -17,6 +17,7 @@ import uuid
 from ui.tkinter_dialog import TkinterPairingDialog
 
 from .storage import PolicyStorage
+from .origin_validation import is_valid_pairing_origin
 
 log = logging.getLogger(__name__)
 
@@ -39,6 +40,19 @@ class PairingManager:
 
     def request_pairing(self, origin: str) -> dict:
         log.debug("request_pairing вызван")
+
+        # КРИТИЧНО: не показываем GUI-диалог вообще, если Origin — не
+        # настоящий I2P-адрес (или localhost для разработки). Иначе мост
+        # можно обмануть на сопряжение с clearnet-сайтом, а дальнейшие
+        # "обратные" запросы моста (react/comment/studio/publish) пойдут на
+        # него напрямую, в обход I2P-прокси (см. origin_validation.py и
+        # snark/publisher.py:_requests_session_for) — раскрывая реальный IP
+        # пользователя. Это проверяется здесь, а не только в http_server.py,
+        # потому что Слой 2 не должен доверять тому, что Слой 1 уже
+        # отфильтровал вход.
+        if not is_valid_pairing_origin(origin):
+            log.debug("origin не похож на I2P-адрес, сопряжение отклонено без диалога")
+            return {"status": "invalid_origin"}
 
         if self.storage.is_blocked(origin):
             log.debug("origin заблокирован")
