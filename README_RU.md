@@ -81,11 +81,16 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-3. Переменные окружения — минимум строка подключения к БД:
+3. Переменные окружения:
 
 ```bash
 export ITUBEP_DATABASE_URL="postgresql+asyncpg://itubep:PASSWORD@127.0.0.1:5432/itubep"
+export ITUBEP_SITE_ORIGIN="http://itubep.i2p"
 ```
+
+`ITUBEP_DATABASE_URL` не обязателен (без него используется дефолт с паролем-плейсхолдером `PASSWORD`, который заведомо не подойдёт к вашей БД) — но фактически без него сайт просто не подключится к PostgreSQL.
+
+`ITUBEP_SITE_ORIGIN` **строго обязателен** и должен быть указан **точно** так, как ваш сайт виден снаружи — тот же адрес (`http://` + b32-адрес или заведённое в адресной книге "дружественное" `.i2p`-имя, без хвостового `/`), который браузер отправляет как заголовок `Origin`, обращаясь к сайту через I2P. Без него (или при малейшем расхождении — протокол, регистр, хвостовой слэш) сайт **осознанно** отклоняет вообще все подписанные запросы моста (лайки/дизлайки, комментарии, обновления студии — код 403, "audience_origin записи не совпадает с адресом этого сайта") — это защита от переиспользования подписи, отправленной мостом для одного сайта, на другом. Это не баг, а fail-closed по умолчанию: без переменной сайт скорее откажет в приёме, чем примет что-то не то. Если после настройки эти действия всё равно не работают — сверьте `ITUBEP_SITE_ORIGIN` с тем, что реально приходит в заголовке `Origin` (это видно в логах моста или в DevTools браузера).
 
 4. Запуск (таблицы создаются автоматически при старте — прототип-режим, без Alembic):
 
@@ -93,7 +98,69 @@ export ITUBEP_DATABASE_URL="postgresql+asyncpg://itubep:PASSWORD@127.0.0.1:5432/
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
+Это разовый запуск для проверки, что всё поднимается. Для постоянной эксплуатации сайт должен автоматически перезапускаться при падении и при перезагрузке сервера — см. раздел "Автозагрузка сайта" ниже.
+
 5. Публикация в I2P — заведите отдельный eepsite-туннель (i2pd/Java I2P) на `127.0.0.1:8000` напрямую, либо (рекомендуется для реальной эксплуатации) поставьте `nginx` перед `uvicorn` и наведите туннель уже на `nginx`.
+
+### Автозагрузка сайта
+
+Вариант ниже — для дистрибутивов с systemd (Debian, Ubuntu, большинство современных серверных ОС). Если у вас его нет (Alpine, старые/минималистичные системы, некоторые контейнерные окружения) — см. альтернативы после.
+
+**systemd**
+
+Создайте `/etc/systemd/system/itubep-site.service` (пути и пользователя поправьте под себя — сервис не должен работать от root):
+
+```ini
+[Unit]
+Description=ITubeP site (FastAPI)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=itubep
+Group=itubep
+WorkingDirectory=/home/itubep/itubep/site
+Environment=ITUBEP_DATABASE_URL=postgresql+asyncpg://itubep:PASSWORD@127.0.0.1:5432/itubep
+Environment=ITUBEP_SITE_ORIGIN=http://itubep.i2p
+ExecStart=/home/itubep/itubep/site/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Важно: значения `Environment=` в юните — это **не** то же самое, что `export` в вашем shell при ручном запуске. systemd не читает переменные из вашей интерактивной сессии — их нужно прописать в юните явно (как выше) либо через `EnvironmentFile=/etc/itubep/site.env` с обычным `KEY=value` построчно в этом файле (удобнее, если переменных станет больше, и не хочется хранить пароль от БД в самом юните).
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now itubep-site
+sudo systemctl status itubep-site         # убедиться, что стартовал без ошибок
+journalctl -u itubep-site -f              # логи в реальном времени
+```
+
+После любой правки юнита или `EnvironmentFile` — `daemon-reload` и `restart` обязательны, простой `restart` без `daemon-reload` подхватит правки самого юнита не всегда.
+
+**Без systemd**
+
+- **Docker**: если у вас уже есть PostgreSQL и i2pd/I2P-роутер отдельно, самый простой вариант — обернуть `uvicorn app.main:app --host 0.0.0.0 --port 8000` в `Dockerfile` (базовый образ `python:3.x-slim`, `pip install -r requirements.txt`, `COPY`, `CMD`) и передавать `ITUBEP_DATABASE_URL`/`ITUBEP_SITE_ORIGIN` через `docker run -e ...` или `environment:` в `docker-compose.yml`. Перезапуск при падении — `restart: unless-stopped` в compose или `--restart unless-stopped` в `docker run`.
+- **supervisord**: секция в `/etc/supervisor/conf.d/itubep-site.conf`:
+  ```ini
+  [program:itubep-site]
+  directory=/home/itubep/itubep/site
+  command=/home/itubep/itubep/site/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+  environment=ITUBEP_DATABASE_URL="postgresql+asyncpg://itubep:PASSWORD@127.0.0.1:5432/itubep",ITUBEP_SITE_ORIGIN="http://itubep.i2p"
+  autostart=true
+  autorestart=true
+  user=itubep
+  ```
+  затем `supervisorctl reread && supervisorctl update`.
+- **OpenRC** (Alpine и т.п.): скрипт в `/etc/init.d/itubep-site` со `supervise-daemon`, переменные — через `export` в самом init-скрипте перед вызовом `command`, либо `/etc/conf.d/itubep-site` (аналог `EnvironmentFile`).
+- **runit/s6**: `run`-скрипт, начинающийся с `#!/bin/sh` и `exec env ITUBEP_DATABASE_URL=... ITUBEP_SITE_ORIGIN=... /path/to/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000` (или отдельный `env/`-каталог с файлами-значениями, в зависимости от реализации).
+- **screen/tmux** — подходит только для разовых тестов, НЕ для боевой эксплуатации: без супервизора процесс не переживёт падение или перезагрузку сервера.
+
+Общий принцип для любого из вариантов: переменные окружения должны быть выставлены **для процесса `uvicorn`**, а не только в вашей терминальной сессии — супервизор (systemd/supervisord/docker/...) запускает процесс отдельно и вашего `export` не увидит, если явно не передать их через его собственный механизм переменных окружения.
 
 6. Служебные CLI-скрипты сайта (запускать из `site/`, с активным venv):
 

@@ -81,11 +81,16 @@ source venv/bin/activate
 pip install -r requirements.txt
 ```
 
-3. Environment variables — at minimum, the database connection string:
+3. Environment variables:
 
 ```bash
 export ITUBEP_DATABASE_URL="postgresql+asyncpg://itubep:PASSWORD@127.0.0.1:5432/itubep"
+export ITUBEP_SITE_ORIGIN="http://itubep.i2p"
 ```
+
+`ITUBEP_DATABASE_URL` isn't strictly required (a placeholder default with the password `PASSWORD` is used if it's unset, which certainly won't match your database) — but in practice the site won't connect to PostgreSQL without it.
+
+`ITUBEP_SITE_ORIGIN` **is required**. Set it to exactly how your site is seen from the outside (`http://` + either the b32 address or a "friendly" `.i2p` name registered in an addressbook, no trailing `/`) — the same value a browser sends as the `Origin` header when it reaches the site over I2P. Without it (or with even a small mismatch — protocol, case, trailing slash) the site **deliberately** rejects every signed request coming from the bridge (likes/dislikes, comments, studio updates — HTTP 403, "audience_origin записи не совпадает с адресом этого сайта"). This is intentional fail-closed behavior, not a bug: without the variable, the site would rather refuse than accept a signature that might have been issued for a different site. If these actions still don't work after setting it, compare `ITUBEP_SITE_ORIGIN` against what actually arrives in the `Origin` header (visible in the bridge's logs or in your browser's DevTools).
 
 4. Run it (tables are created automatically on startup — prototype mode, no Alembic yet):
 
@@ -93,7 +98,69 @@ export ITUBEP_DATABASE_URL="postgresql+asyncpg://itubep:PASSWORD@127.0.0.1:5432/
 uvicorn app.main:app --host 127.0.0.1 --port 8000
 ```
 
+This is a one-off run to confirm everything starts cleanly. For real deployment, the site needs to restart automatically on crash and on reboot — see "Running the site on boot" below.
+
 5. Publishing to I2P — set up a separate eepsite tunnel (i2pd/Java I2P) pointing directly at `127.0.0.1:8000`, or (recommended for real-world use) put `nginx` in front of `uvicorn` and point the tunnel at `nginx` instead.
+
+### Running the site on boot
+
+The section below is for systemd-based distros (Debian, Ubuntu, most modern server OSes). If you don't have systemd (Alpine, minimal systems, some container setups), see the alternatives further down.
+
+**systemd**
+
+Create `/etc/systemd/system/itubep-site.service` (adjust paths and the user to your setup — don't run this as root):
+
+```ini
+[Unit]
+Description=ITubeP site (FastAPI)
+After=network.target postgresql.service
+Wants=postgresql.service
+
+[Service]
+Type=simple
+User=itubep
+Group=itubep
+WorkingDirectory=/home/itubep/itubep/site
+Environment=ITUBEP_DATABASE_URL=postgresql+asyncpg://itubep:PASSWORD@127.0.0.1:5432/itubep
+Environment=ITUBEP_SITE_ORIGIN=http://itubep.i2p
+ExecStart=/home/itubep/itubep/site/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Restart=on-failure
+RestartSec=3
+
+[Install]
+WantedBy=multi-user.target
+```
+
+Important: `Environment=` lines in the unit are **not** the same as `export`-ing variables in your own shell when you run things by hand. systemd doesn't read your interactive session's environment — variables must be declared explicitly in the unit (as above), or via `EnvironmentFile=/etc/itubep/site.env` pointing at a plain `KEY=value` file (handy once you have more variables, or if you'd rather not keep the database password in the unit file itself).
+
+```bash
+sudo systemctl daemon-reload
+sudo systemctl enable --now itubep-site
+sudo systemctl status itubep-site         # confirm it started without errors
+journalctl -u itubep-site -f              # live logs
+```
+
+After any edit to the unit or its `EnvironmentFile`, `daemon-reload` followed by `restart` is required — a plain `restart` alone doesn't always pick up unit-file changes.
+
+**Without systemd**
+
+- **Docker**: if you already run PostgreSQL and an i2pd/I2P router separately, the simplest option is wrapping `uvicorn app.main:app --host 0.0.0.0 --port 8000` in a `Dockerfile` (base image `python:3.x-slim`, `pip install -r requirements.txt`, `COPY`, `CMD`), and passing `ITUBEP_DATABASE_URL`/`ITUBEP_SITE_ORIGIN` via `docker run -e ...` or `environment:` in `docker-compose.yml`. For restart-on-crash, use `restart: unless-stopped` in compose or `--restart unless-stopped` with `docker run`.
+- **supervisord**: a section in `/etc/supervisor/conf.d/itubep-site.conf`:
+  ```ini
+  [program:itubep-site]
+  directory=/home/itubep/itubep/site
+  command=/home/itubep/itubep/site/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+  environment=ITUBEP_DATABASE_URL="postgresql+asyncpg://itubep:PASSWORD@127.0.0.1:5432/itubep",ITUBEP_SITE_ORIGIN="http://itubep.i2p"
+  autostart=true
+  autorestart=true
+  user=itubep
+  ```
+  then `supervisorctl reread && supervisorctl update`.
+- **OpenRC** (Alpine etc.): an init script at `/etc/init.d/itubep-site` using `supervise-daemon`, with variables either `export`-ed in the init script itself before invoking `command`, or set in `/etc/conf.d/itubep-site` (the OpenRC equivalent of `EnvironmentFile`).
+- **runit/s6**: a `run` script starting with `#!/bin/sh` that does `exec env ITUBEP_DATABASE_URL=... ITUBEP_SITE_ORIGIN=... /path/to/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000` (or a separate `env/` directory with one file per variable, depending on the implementation).
+- **screen/tmux** — fine for one-off testing only, NOT for production: without a supervisor the process won't survive a crash or reboot.
+
+The general rule for any of these: the environment variables need to be set **for the `uvicorn` process itself**, not just in your terminal session — the supervisor (systemd/supervisord/docker/...) launches the process independently and won't see your shell's `export`ed values unless you pass them through its own environment mechanism.
 
 6. Site maintenance CLI scripts (run from `site/`, with the venv active):
 
