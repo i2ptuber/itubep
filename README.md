@@ -123,7 +123,9 @@ Group=itubep
 WorkingDirectory=/home/itubep/itubep/site
 Environment=ITUBEP_DATABASE_URL=postgresql+asyncpg://itubep:PASSWORD@127.0.0.1:5432/itubep
 Environment=ITUBEP_SITE_ORIGIN=http://itubep.i2p
-ExecStart=/home/itubep/itubep/site/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000
+Environment=ITUBEP_DB_POOL_SIZE=10
+Environment=ITUBEP_DB_MAX_OVERFLOW=20
+ExecStart=/home/itubep/itubep/site/venv/bin/uvicorn app.main:app --host 127.0.0.1 --port 8000 --workers 4
 Restart=on-failure
 RestartSec=3
 
@@ -161,6 +163,37 @@ After any edit to the unit or its `EnvironmentFile`, `daemon-reload` followed by
 - **screen/tmux** — fine for one-off testing only, NOT for production: without a supervisor the process won't survive a crash or reboot.
 
 The general rule for any of these: the environment variables need to be set **for the `uvicorn` process itself**, not just in your terminal session — the supervisor (systemd/supervisord/docker/...) launches the process independently and won't see your shell's `export`ed values unless you pass them through its own environment mechanism.
+
+### Scaling for more users
+
+The site doesn't serve the video itself (each viewer's i2psnark does that over P2P) — HTTP load on the site is light (HTML/JSON/`.torrent` metadata), so the usual bottleneck isn't CPU/RAM but the number of `uvicorn` workers and the PostgreSQL connection pool.
+
+**1. Multiple `uvicorn` workers.** By default the instructions above run a single process. The `--workers N` flag (as in the systemd unit example) spawns N processes sharing one listen socket, giving you parallelism across cores instead of a single asyncio event loop. A reasonable starting point is your CPU's core count (4 workers for a 12th-gen i3 is typical).
+
+**2. PostgreSQL connection pool.** Previously `create_async_engine` got no pool parameters, so SQLAlchemy silently used its default `pool_size=5 + max_overflow=10 = 15` connections **per process**. This is now configurable via environment variables (also set via `Environment=` in the unit, or an `EnvironmentFile`):
+
+```bash
+ITUBEP_DB_POOL_SIZE=10       # base pool size per process
+ITUBEP_DB_MAX_OVERFLOW=20    # how many extra connections are allowed during a burst
+ITUBEP_DB_POOL_TIMEOUT=10    # seconds to wait for a free connection before raising
+ITUBEP_DB_POOL_RECYCLE=1800  # recycle connections older than 30 min (avoids "server closed the connection unexpectedly")
+```
+
+**Important — size these against the total, not just the per-process numbers:**
+
+```
+(ITUBEP_DB_POOL_SIZE + ITUBEP_DB_MAX_OVERFLOW) × number of uvicorn workers
+    should be comfortably BELOW max_connections in postgresql.conf
+```
+
+With the example above (`pool_size=10`, `max_overflow=20`, `--workers 4`) that's `(10+20)×4 = 120` — already **above** PostgreSQL's default `max_connections=100`, so some connection requests would start failing on `ITUBEP_DB_POOL_TIMEOUT`. Either lower `ITUBEP_DB_POOL_SIZE`/`ITUBEP_DB_MAX_OVERFLOW`, or raise `max_connections` in `postgresql.conf` (`/etc/postgresql/*/main/postgresql.conf`) and restart PostgreSQL — leaving headroom for the maintenance `scripts/*` and the superuser, e.g. `max_connections = 150`.
+
+Check the current limit and how it's being used:
+
+```bash
+sudo -u postgres psql -c "SHOW max_connections;"
+sudo -u postgres psql -c "SELECT count(*) FROM pg_stat_activity;"   # currently in use
+```
 
 6. Site maintenance CLI scripts (run from `site/`, with the venv active):
 
