@@ -94,3 +94,48 @@ main { padding: 30px; max-width: 1100px; margin: 0 auto; }
 /* --- Главная: разделы "recent"/"random" --- */
 .feed-heading { font-size: 1.15em; color: #ff9800; margin: 0 0 14px; }
 .feed-heading:not(:first-child) { margin-top: 40px; }
+
+/* --- Статус плеера (сопряжение/загрузка/ошибки) — намеренно отделён от
+   #player-status пустого текста, чтобы визуально не сливаться со
+   следующим за плеером описанием видео (.description) --- */
+#player-status {
+    min-height: 1.2em;
+    margin: 6px 0 0;
+    font-size: 0.85em;
+    font-style: italic;
+    color: #888;
+}
+
+/* --- Лайк/дизлайк --- */
+.reactions-bar { display: flex; gap: 10px; margin: 14px 0; }
+.reaction-btn {
+    display: flex; align-items: center; gap: 6px;
+    padding: 8px 16px; border-radius: 20px; border: 1px solid #333;
+    background: #1a1a1a; color: #eee; cursor: pointer; font-size: 0.95em;
+    font-family: inherit;
+}
+.reaction-btn:hover { background: #262626; }
+.reaction-btn.active { border-color: #ff9800; background: #2a1f0f; color: #ff9800; }
+
+/* --- Комментарии --- */
+.comments-section { max-width: 800px; margin-top: 36px; }
+.comments-section h2 { font-size: 1.1em; color: #ff9800; margin-bottom: 14px; }
+#comment-form textarea {
+    width: 100%; box-sizing: border-box; min-height: 70px; resize: vertical;
+    padding: 10px; border-radius: 6px; border: 1px solid #333;
+    background: #1a1a1a; color: #eee; font-family: inherit; font-size: 0.95em;
+}
+.comment-form-footer { display: flex; align-items: center; justify-content: space-between; margin-top: 8px; }
+.form-hint-error { color: #e05555 !important; }
+#comment-status { color: #999; margin-top: 8px; font-size: 0.85em; }
+
+.comment-row { padding: 14px 0; border-bottom: 1px solid #222; }
+.comment-author { color: #ff9800; text-decoration: none; font-weight: bold; font-size: 0.9em; }
+.comment-author:hover { text-decoration: underline; }
+.comment-body { margin: 6px 0 0; white-space: pre-wrap; color: #ddd; }
+
+#comments-load-more {
+    margin-top: 14px; padding: 8px 16px; border-radius: 5px; border: 1px solid #333;
+    background: #1a1a1a; color: #eee; cursor: pointer; font-family: inherit;
+}
+#comments-load-more:hover { background: #262626; }

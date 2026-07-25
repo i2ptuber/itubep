@@ -212,24 +212,14 @@ async function initPlayer() {
                     statusEl.textContent = window.t("player.status_playback_error") + data.details;
                 }
             });
-            let seekDebounceTimer = null;
-            let lastSeekTargetIndex = null;
-            videoEl.addEventListener("seeking", () => {
-                // TODO(seek-priority): форсирование приоритета сегментов через
-                // мост временно отключено — stop/start у i2psnark на каждую
-                // перемотку рвёт все текущие BT-соединения, что оказалось
-                // хуже, чем просто ждать естественную докачку по порядку
-                // (enableInOrder). См. bridge/snark/integration.py:set_seek_priority.
-                // Пока просто даём HLS.js ждать сегмент естественным путём.
-                if (seekDebounceTimer) clearTimeout(seekDebounceTimer);
-                seekDebounceTimer = setTimeout(() => {
-                    const targetIndex = segmentIndexForTime(quality.segment_durations, videoEl.currentTime);
-                    if (targetIndex === lastSeekTargetIndex) return;
-                    lastSeekTargetIndex = targetIndex;
-                    statusEl.textContent = window.t("player.status_seeking", {index: targetIndex});
-                    // notifyBridgeSeek(token, handle.torrent_id, targetIndex); — отключено, см. TODO выше
-                }, 300);
-            });
+            // Форсирование приоритета сегментов через мост при перемотке
+            // временно отключено — stop/start у i2psnark на каждую
+            // перемотку рвёт все текущие BT-соединения, что оказалось
+            // хуже, чем просто ждать естественную докачку по порядку
+            // (enableInOrder). См. bridge/snark/integration.py:set_seek_priority.
+            // HLS.js сам ждёт нужный сегмент естественным путём — статус
+            // "loading_fragments" выше уже покрывает это ожидание, отдельное
+            // сообщение про перемотку было лишним и здесь больше не выводится.
         } else if (videoEl.canPlayType("application/vnd.apple.mpegurl")) {
             // Safari — нативная поддержка HLS
             videoEl.src = playlistUrl;
@@ -238,6 +228,18 @@ async function initPlayer() {
         } else {
             throw new Error(window.t("player.error_no_hls"));
         }
+
+        // "Ready to play" полезен только до старта воспроизведения — как
+        // только видео реально пошло, статус больше не нужен и просто
+        // зависал бы под плеером, визуально сливаясь с описанием видео
+        // ниже. Проверяем текущий текст перед очисткой, чтобы не затереть
+        // более свежее сообщение (например, "loading_fragments"), которое
+        // могло появиться между MANIFEST_PARSED и первым фактическим playing.
+        videoEl.addEventListener("playing", () => {
+            if (statusEl.textContent === window.t("player.status_ready")) {
+                statusEl.textContent = "";
+            }
+        });
     } catch (e) {
         console.error("[itubep] failed to initialize bridge player:", e);
         statusEl.textContent = "";

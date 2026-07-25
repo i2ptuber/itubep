@@ -239,6 +239,36 @@ def create_app(policy: BridgePolicy) -> web.Application:
             return web.json_response({"error": str(e)}, status=400)
         return web.json_response(result)
 
+    async def react(request: web.Request):
+        token = _extract_token(request)
+        body = await request.json()
+        video_id = body.get("video_id", "")
+        value = body.get("value")
+        if not video_id or value is None:
+            return web.json_response({"error": "missing video_id or value"}, status=400)
+        try:
+            result = policy.react_to_video(token, video_id, int(value))
+        except PermissionDenied:
+            raise
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+        return web.json_response(result)
+
+    async def comment(request: web.Request):
+        token = _extract_token(request)
+        body = await request.json()
+        video_id = body.get("video_id", "")
+        comment_body = body.get("body", "")
+        if not video_id or not comment_body:
+            return web.json_response({"error": "missing video_id or body"}, status=400)
+        try:
+            result = policy.post_comment(token, video_id, comment_body)
+        except PermissionDenied:
+            raise
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+        return web.json_response(result)
+
     app.router.add_post("/bridge/stream_token", stream_token)
     app.router.add_get("/bridge/playlist", playlist)
     app.router.add_get("/bridge/segment", segment)
@@ -256,6 +286,8 @@ def create_app(policy: BridgePolicy) -> web.Application:
     app.router.add_post("/bridge/open_settings", open_settings)
     app.router.add_post("/bridge/studio/update", studio_update)
     app.router.add_post("/bridge/studio/state", studio_state)
+    app.router.add_post("/bridge/react", react)
+    app.router.add_post("/bridge/comment", comment)
 
     return app
 

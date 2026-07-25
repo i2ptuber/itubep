@@ -99,7 +99,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
 
         "about.title": "Contacts and source code",
         "about.source_heading": "Source code",
-        "about.source_text": "ITubeP is free software. Site and bridge source code, issues, and "
+        "about.source_text": "ITubeP is open source. Site and bridge source code, issues, and "
                               "pull requests:",
         "about.contact_heading": "Contact",
         "about.contact_text": "Bug reports, ideas, and pull requests are welcome via the project "
@@ -109,12 +109,14 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "rules.intro": "Guidelines for publishing on this site — video and channel titles, "
                         "descriptions, and general content rules.",
         "rules.item_legal": "Content must not violate the laws applicable to the site operator.",
+        "rules.item_naming": "Video and channel titles must accurately describe their content — "
+                              "no misleading clickbait titles or thumbnails-in-text.",
         "rules.item_description": "Descriptions should be relevant to the video — no unrelated "
-                                    "spam, repeated mass keyword stuffing and links to illegal materials.",
-        "rules.item_harm": "No content that promotes violence or clearly illegal "
+                                    "spam, link farms, or repeated mass keyword stuffing.",
+        "rules.item_harm": "No content that promotes violence, harassment, or clearly illegal "
                             "activity.",
         "rules.item_moderation": "Violations may result in a video being removed or a channel "
-                                  "being banned by the site operator.",
+                                  "being banned by the site operator (see README, scripts/moderate.py).",
 
         "publish.title": "Publish a video",
         "publish.description": "Publishing is done through the local ITubeP Bridge — several "
@@ -135,6 +137,14 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "video.nojs_or_download": "Or download the torrent file and watch locally with any "
                                     "BitTorrent client that supports I2P:",
         "video.download_quality": "Download {quality} (.torrent)",
+
+        "comments.heading": "Comments",
+        "comments.placeholder": "Add a comment...",
+        "comments.submit": "Comment",
+        "comments.load_more": "Show more comments",
+        "comments.status_sending": "Sending...",
+        "comments.status_error": "Error: ",
+        "comments.too_long": "Comment is too long (max 2000 characters, not counting whitespace)",
 
         "player.status_pairing_done": "Pairing complete, adding torrent...",
         "player.status_adding_torrent": "Adding torrent...",
@@ -213,7 +223,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
 
         "about.title": "Контакты и исходный код",
         "about.source_heading": "Исходный код",
-        "about.source_text": "ITubeP — свободное ПО. Код сайта и моста, "
+        "about.source_text": "ITubeP — проект с открытым исходным кодом. Код сайта и моста, "
                               "баг-репорты и пул-реквесты:",
         "about.contact_heading": "Контакты",
         "about.contact_text": "Багрепорты, идеи и пул-реквесты приветствуются через репозиторий "
@@ -223,12 +233,14 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "rules.intro": "Правила публикации на этом сайте — названия видео и каналов, описания "
                         "под видео и общие правила по контенту.",
         "rules.item_legal": "Контент не должен нарушать законодательство, применимое к оператору сайта.",
+        "rules.item_naming": "Названия видео и каналов должны точно описывать содержание — "
+                              "без вводящих в заблуждение кликбейт-заголовков и текста на превью.",
         "rules.item_description": "Описания должны относиться к видео — без постороннего спама, "
-                                    "массового повторения ключевых слов и ссылок на незаконные материалы.",
-        "rules.item_harm": "Запрещён контент, пропагандирующий насилие или явно "
+                                    "ссылочных ферм и массового повторения ключевых слов.",
+        "rules.item_harm": "Запрещён контент, пропагандирующий насилие, травлю или явно "
                             "незаконную деятельность.",
         "rules.item_moderation": "Нарушения могут привести к удалению видео или блокировке канала "
-                                  "держателем сайта.",
+                                  "держателем сайта (см. README, scripts/moderate.py).",
 
         "publish.title": "Опубликовать видео",
         "publish.description": "Публикация выполняется через локальный ITubeP Bridge — откроется "
@@ -249,6 +261,14 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "video.nojs_or_download": "Либо скачайте торрент-файл и смотрите локально любым "
                                     "BitTorrent-клиентом с поддержкой I2P:",
         "video.download_quality": "Скачать {quality} (.torrent)",
+
+        "comments.heading": "Комментарии",
+        "comments.placeholder": "Написать комментарий...",
+        "comments.submit": "Отправить",
+        "comments.load_more": "Показать ещё комментарии",
+        "comments.status_sending": "Отправка...",
+        "comments.status_error": "Ошибка: ",
+        "comments.too_long": "Комментарий слишком длинный (максимум 2000 символов без учёта пробелов)",
 
         "player.status_pairing_done": "Сопряжение выполнено, добавляю торрент...",
         "player.status_adding_torrent": "Добавляю торрент...",

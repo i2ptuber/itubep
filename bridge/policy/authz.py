@@ -370,6 +370,93 @@ class BridgePolicy:
 
         return resp.json()
 
+    def react_to_video(self, token: str, video_id: str, value: int) -> dict:
+        """
+        Лайк/дизлайк (value=1/-1) или отмена голоса (value=0). Подписывается
+        ключом канала — тот же паттерн, что studio_update.
+        """
+        import time
+        import requests
+        from snark.publisher import _requests_session_for, I2P_REQUEST_TIMEOUT_SECONDS
+
+        if value not in (-1, 0, 1):
+            raise PermissionDenied("Некорректное значение голоса")
+
+        origin = self._authenticate(token)
+        self._confirm_if_needed(origin, f"проголосовать за видео {video_id}")
+
+        channel = self._channel_identity
+        if channel is None:
+            channel = get_or_create_channel(self.storage, PublishDialogs())
+            self._channel_identity = channel
+
+        record = {
+            "video_id": video_id,
+            "channel_id": channel.channel_id,
+            "value": value,
+            # Фиксированная длина + нулями дополненные микросекунды — важно,
+            # т.к. main.py сравнивает updated_at КАК СТРОКУ (VARCHAR-колонка),
+            # а не как число; "163.10" < "163.9" лексикографически, что было
+            # бы неверно для голосов, отправленных в быстрой последовательности.
+            "updated_at": time.strftime("%Y-%m-%dT%H:%M:%S", time.gmtime())
+                          + f".{int((time.time() % 1) * 1_000_000):06d}Z",
+        }
+        record["signature"] = channel.sign(record)
+
+        try:
+            resp = _requests_session_for(origin, self.storage.get_i2p_http_proxy()).post(
+                f"{origin.rstrip('/')}/api/video/{video_id}/react",
+                json=record, timeout=I2P_REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as e:
+            raise PermissionDenied(f"Не удалось соединиться с сайтом для отправки голоса: {e}")
+        if resp.status_code != 200:
+            raise PermissionDenied(f"Сайт отклонил голос: {resp.status_code} {resp.text}")
+
+        return resp.json()
+
+    def post_comment(self, token: str, video_id: str, body: str) -> dict:
+        """
+        Комментарий под видео. client_nonce — случайный, для защиты от
+        replay на стороне сайта (см. site: models.py:Comment.client_nonce),
+        генерируется на КАЖДЫЙ вызов заново — иначе повторная отправка
+        после сбоя сети выглядела бы для сайта как дубликат и отклонялась
+        бы, даже если первая попытка реально не дошла.
+        """
+        import secrets
+        import time
+        import requests
+        from snark.publisher import _requests_session_for, I2P_REQUEST_TIMEOUT_SECONDS
+
+        origin = self._authenticate(token)
+        self._confirm_if_needed(origin, "опубликовать комментарий")
+
+        channel = self._channel_identity
+        if channel is None:
+            channel = get_or_create_channel(self.storage, PublishDialogs())
+            self._channel_identity = channel
+
+        record = {
+            "video_id": video_id,
+            "channel_id": channel.channel_id,
+            "body": body,
+            "client_nonce": secrets.token_hex(16),
+            "created_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        record["signature"] = channel.sign(record)
+
+        try:
+            resp = _requests_session_for(origin, self.storage.get_i2p_http_proxy()).post(
+                f"{origin.rstrip('/')}/api/video/{video_id}/comment",
+                json=record, timeout=I2P_REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as e:
+            raise PermissionDenied(f"Не удалось соединиться с сайтом для отправки комментария: {e}")
+        if resp.status_code != 200:
+            raise PermissionDenied(f"Сайт отклонил комментарий: {resp.status_code} {resp.text}")
+
+        return resp.json()
+
     def create_stream_token(self, token: str, torrent_id: int) -> tuple[str, int]:
         """
         Минтит короткоживущий scoped-токен для чтения ОДНОГО конкретного

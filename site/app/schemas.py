@@ -4,7 +4,7 @@ schemas.py — Pydantic-модели для API-контракта.
 
 from __future__ import annotations
 
-from pydantic import BaseModel, Field
+from pydantic import BaseModel, Field, field_validator
 
 
 class ChannelRegisterRequest(BaseModel):
@@ -114,3 +114,77 @@ class StudioStateResponse(BaseModel):
     site_description: str = ""
     pinned_video_id: str | None = None
     videos: list[VideoListItem]
+
+
+class ReactionRequest(BaseModel):
+    """
+    Подписанный владельцем channel_id голос (лайк/дизлайк) — тот же
+    паттерн подписи, что StudioUpdateRequest. value=0 значит "отменить
+    голос" (удалить строку в video_reactions), не отдельный "нейтральный" тип.
+    """
+    video_id: str = Field(..., min_length=1, max_length=64)
+    channel_id: str = Field(..., min_length=1, max_length=64)
+    value: int = Field(..., ge=-1, le=1)
+    updated_at: str
+    signature: str = Field(..., min_length=1)
+
+    @field_validator("value")
+    @classmethod
+    def value_not_zero_unless_explicit(cls, v: int) -> int:
+        # ge=-1/le=1 уже ограничивают диапазон -1/0/1 — 0 явно разрешён
+        # (означает "убрать голос"), отдельная проверка тут не нужна,
+        # оставлено для читаемости namespace значений в одном месте.
+        return v
+
+
+class ReactionResponse(BaseModel):
+    video_id: str
+    like_count: int
+    dislike_count: int
+    my_value: int  # -1/0/1 — текущий голос ЭТОГО channel_id после применения запроса
+
+
+class CommentCreateRequest(BaseModel):
+    """
+    Подписанный владельцем channel_id комментарий. Лимит длины — 2000
+    символов БЕЗ УЧЁТА пробельных символов (по просьбе — комментарии могут
+    быть многострочными/развёрнутыми); raw max_length=10000 — потолок на
+    сырую длину (с пробелами/переводами строк), чтобы нельзя было обойти
+    смысловой лимит абсурдным паддингом из пробелов.
+    client_nonce — обязателен, уникален (см. models.py:Comment) — защита
+    от replay: без него повтор того же подписанного запроса создавал бы
+    дубликат комментария на каждую отправку.
+    """
+    video_id: str = Field(..., min_length=1, max_length=64)
+    channel_id: str = Field(..., min_length=1, max_length=64)
+    body: str = Field(..., min_length=1, max_length=10000)
+    client_nonce: str = Field(..., min_length=8, max_length=64)
+    created_at: str
+    signature: str = Field(..., min_length=1)
+
+    @field_validator("body")
+    @classmethod
+    def body_length_without_whitespace(cls, v: str) -> str:
+        stripped_len = len("".join(v.split()))
+        if stripped_len == 0:
+            raise ValueError("Comment body must contain non-whitespace characters")
+        if stripped_len > 2000:
+            raise ValueError("Comment body exceeds 2000 non-whitespace characters")
+        return v
+
+
+class CommentItem(BaseModel):
+    id: int
+    channel_id: str
+    channel_display_name: str
+    body: str
+    created_at: str
+
+    class Config:
+        from_attributes = True
+
+
+class CommentsListResponse(BaseModel):
+    video_id: str
+    total: int
+    comments: list[CommentItem]

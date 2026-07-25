@@ -14,12 +14,14 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 
 from .database import get_session, init_models, async_session
-from .models import Channel, Video, VideoChunk, RateLimitConfig
+from .models import Channel, Video, VideoChunk, RateLimitConfig, VideoReaction, Comment
 from .schemas import (
     ChannelRegisterRequest, ChannelResponse, SearchResultItem, SearchResponse,
     VideoListItem, ChannelVideosResponse, StudioUpdateRequest,
     StudioAuthRequest, StudioStateResponse,
+    ReactionRequest, ReactionResponse, CommentCreateRequest, CommentItem, CommentsListResponse,
 )
+from sqlalchemy.exc import IntegrityError
 from .crypto import verify_channel_record, verify_video_manifest, verify_signature
 from .rate_limit import enforce
 from .i18n import get_language, get_translator, get_strings, SUPPORTED_LANGUAGES, DEFAULT_LANGUAGE, COOKIE_NAME
@@ -241,6 +243,186 @@ async def studio_state(
             )
             for v in videos
         ],
+    )
+
+
+@app.post("/api/video/{video_id}/react", response_model=ReactionResponse)
+async def react_to_video(
+    video_id: str,
+    req: ReactionRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Лайк/дизлайк. "1 голос на канал на видео" гарантирован PRIMARY KEY
+    (video_id, channel_id) в video_reactions (см. models.py) — это UPSERT
+    (переключение лайк↔дизлайк) либо DELETE строки (value=0, отмена
+    голоса), не INSERT новой строки поверх старой. Анти-replay сравнивает
+    updated_at с уже сохранённым значением ИМЕННО ЭТОЙ пары (video_id,
+    channel_id), а не с чем-то общим на канал — голоса за разные видео
+    независимы друг от друга.
+    """
+    if req.video_id != video_id:
+        raise HTTPException(status_code=400, detail="video_id mismatch between path and body")
+
+    enforce("reaction_id", req.channel_id)
+
+    channel = await session.get(Channel, req.channel_id)
+    if channel is None:
+        raise HTTPException(status_code=404, detail="Unknown channel_id — register channel first")
+    if channel.banned:
+        raise HTTPException(status_code=403, detail="Канал заблокирован держателем сайта")
+
+    video = await session.get(Video, video_id)
+    if video is None or video.removed or video.access_level != "public":
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    if not verify_signature(req.model_dump(), channel.public_key):
+        raise HTTPException(status_code=400, detail="Invalid signature")
+
+    existing_result = await session.execute(
+        select(VideoReaction).where(
+            VideoReaction.video_id == video_id, VideoReaction.channel_id == req.channel_id,
+        )
+    )
+    existing = existing_result.scalar_one_or_none()
+    if existing is not None and req.updated_at <= existing.updated_at:
+        raise HTTPException(status_code=409, detail="Записанный голос не новее существующего")
+
+    old_value = existing.value if existing is not None else 0
+
+    if req.value == 0:
+        if existing is not None:
+            await session.delete(existing)
+    elif existing is not None:
+        existing.value = req.value
+        existing.updated_at = req.updated_at
+    else:
+        session.add(VideoReaction(
+            video_id=video_id, channel_id=req.channel_id,
+            value=req.value, updated_at=req.updated_at,
+        ))
+
+    # Денормализованные счётчики (см. models.py:Video.like_count) — считаем
+    # дельту старого/нового значения вместо COUNT(*) по всей таблице реакций.
+    if old_value == 1:
+        video.like_count = max(0, video.like_count - 1)
+    elif old_value == -1:
+        video.dislike_count = max(0, video.dislike_count - 1)
+    if req.value == 1:
+        video.like_count += 1
+    elif req.value == -1:
+        video.dislike_count += 1
+
+    await session.commit()
+
+    return ReactionResponse(
+        video_id=video_id,
+        like_count=video.like_count,
+        dislike_count=video.dislike_count,
+        my_value=req.value,
+    )
+
+
+@app.get("/api/video/{video_id}/comments", response_model=CommentsListResponse)
+async def get_comments(
+    video_id: str,
+    limit: int = 50,
+    offset: int = 0,
+    session: AsyncSession = Depends(get_session),
+):
+    enforce("comment_read")
+    limit = min(limit, 100)
+
+    video = await session.get(Video, video_id)
+    if video is None or video.removed or video.access_level != "public":
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    result = await session.execute(
+        select(Comment, Channel.display_name, Channel.site_display_name)
+        .join(Channel, Comment.channel_id == Channel.channel_id)
+        .where(Comment.video_id == video_id, Comment.removed == False)  # noqa: E712
+        .order_by(Comment.created_at.desc())
+        .limit(limit)
+        .offset(offset)
+    )
+    rows = result.all()
+
+    return CommentsListResponse(
+        video_id=video_id,
+        total=video.comment_count,
+        comments=[
+            CommentItem(
+                id=c.id,
+                channel_id=c.channel_id,
+                channel_display_name=site_name or display_name,
+                body=c.body,
+                created_at=c.created_at.isoformat(),
+            )
+            for c, display_name, site_name in rows
+        ],
+    )
+
+
+@app.post("/api/video/{video_id}/comment", response_model=CommentItem)
+async def post_comment(
+    video_id: str,
+    req: CommentCreateRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Подписанный комментарий — тот же паттерн, что react_to_video/studio.
+    Длина тела уже провалидирована схемой (CommentCreateRequest: 2000
+    символов без пробелов). client_nonce UNIQUE защищает от replay: если
+    подписанный запрос отправят повторно (перехват, баг клиента,
+    намеренный повтор), IntegrityError на уникальном индексе — не создаём
+    дубликат комментария на каждый повтор.
+    """
+    if req.video_id != video_id:
+        raise HTTPException(status_code=400, detail="video_id mismatch between path and body")
+
+    enforce("comment_id", req.channel_id)
+
+    channel = await session.get(Channel, req.channel_id)
+    if channel is None:
+        raise HTTPException(status_code=404, detail="Unknown channel_id — register channel first")
+    if channel.banned:
+        raise HTTPException(status_code=403, detail="Канал заблокирован держателем сайта")
+
+    video = await session.get(Video, video_id)
+    if video is None or video.removed or video.access_level != "public":
+        raise HTTPException(status_code=404, detail="Video not found")
+
+    if not verify_signature(req.model_dump(), channel.public_key):
+        raise HTTPException(status_code=400, detail="Invalid signature")
+
+    existing_nonce = await session.execute(
+        select(Comment).where(Comment.client_nonce == req.client_nonce)
+    )
+    if existing_nonce.scalar_one_or_none() is not None:
+        raise HTTPException(status_code=409, detail="Duplicate comment (client_nonce already used)")
+
+    comment = Comment(
+        video_id=video_id, channel_id=req.channel_id,
+        body=req.body, client_nonce=req.client_nonce,
+    )
+    session.add(comment)
+    video.comment_count += 1
+    try:
+        await session.commit()
+    except IntegrityError:
+        # Гонка с параллельным запросом с тем же client_nonce (или
+        # предыдущая проверка устарела) — откатываем ЦЕЛИКОМ, включая
+        # инкремент comment_count, транзакция атомарна.
+        await session.rollback()
+        raise HTTPException(status_code=409, detail="Duplicate comment (client_nonce already used)")
+    await session.refresh(comment)
+
+    return CommentItem(
+        id=comment.id,
+        channel_id=comment.channel_id,
+        channel_display_name=channel.site_display_name or channel.display_name,
+        body=comment.body,
+        created_at=comment.created_at.isoformat(),
     )
     
 @app.post("/api/video/publish")
@@ -606,8 +788,11 @@ async def video_page(
                 "title": video.title,
                 "description": video.description,
                 "qualities": manifest.get("qualities", []),
+                "like_count": video.like_count,
+                "dislike_count": video.dislike_count,
+                "comment_count": video.comment_count,
             },
-            "channel_display_name": channel.display_name if channel else "Unknown",
+            "channel_display_name": (channel.site_display_name or channel.display_name) if channel else "Unknown",
             **_i18n_ctx(request),
         },
     )

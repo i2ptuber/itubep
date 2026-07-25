@@ -26,7 +26,34 @@
         </ul>
     </div>
 
+    <!-- Лайк/дизлайк — требуют своего канала (тот же мост, что для
+         просмотра/публикации/студии), см. static/reactions.js -->
+    <div class="reactions-bar">
+        <button type="button" id="like-btn" class="reaction-btn" data-value="1">
+            👍 <span id="like-count">{{ video.like_count }}</span>
+        </button>
+        <button type="button" id="dislike-btn" class="reaction-btn" data-value="-1">
+            👎 <span id="dislike-count">{{ video.dislike_count }}</span>
+        </button>
+    </div>
+
     <p class="description">{{ video.description }}</p>
+
+    <section class="comments-section">
+        <h2 id="comments-heading">{{ t('comments.heading') }} (<span id="comments-total">{{ video.comment_count }}</span>)</h2>
+
+        <form id="comment-form">
+            <textarea id="comment-input" placeholder="{{ t('comments.placeholder') }}" maxlength="10000"></textarea>
+            <div class="comment-form-footer">
+                <span id="comment-chars-left" class="form-hint"></span>
+                <button type="submit" class="btn-primary">{{ t('comments.submit') }}</button>
+            </div>
+            <div id="comment-status"></div>
+        </form>
+
+        <div id="comments-list"></div>
+        <button type="button" id="comments-load-more" style="display:none;">{{ t('comments.load_more') }}</button>
+    </section>
 
     <script>
         window.ITUBEP_VIDEO = {
@@ -37,4 +64,5 @@
     </script>
     <script src="/static/hls.min.js"></script>
     <script src="/static/player.js"></script>
+    <script src="/static/reactions.js"></script>
 {% endblock %}

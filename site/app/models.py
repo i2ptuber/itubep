@@ -82,6 +82,16 @@ class Video(Base):
     # сайт для них используется только как реестр метаданных на будущее).
     access_level: Mapped[str] = mapped_column(String(20), default="public")
 
+    # --- Денормализованные счётчики (см. VideoReaction/Comment ниже) ---
+    # Держим прямо на Video, чтобы страница видео читалась одним запросом
+    # (COUNT(*) по video_reactions/comments при каждом показе страницы был
+    # бы лишней нагрузкой на таблицы, которые как раз и растут больше
+    # всего). Обновляются в той же транзакции, что и запись реакции/
+    # комментария — см. main.py:react_to_video/post_comment.
+    like_count: Mapped[int] = mapped_column(Integer, default=0)
+    dislike_count: Mapped[int] = mapped_column(Integer, default=0)
+    comment_count: Mapped[int] = mapped_column(Integer, default=0)
+
     channel: Mapped["Channel"] = relationship(back_populates="videos")
     chunks: Mapped[list["VideoChunk"]] = relationship(back_populates="video")
 
@@ -96,6 +106,54 @@ class VideoChunk(Base):
     torrent_file: Mapped[bytes] = mapped_column(nullable=False)  # сам .torrent, BLOB
 
     video: Mapped["Video"] = relationship(back_populates="chunks")
+
+
+class VideoReaction(Base):
+    """
+    Лайк/дизлайк — composite PRIMARY KEY (video_id, channel_id) гарантирует
+    "1 голос на канал на видео" на уровне схемы БД, а не только проверкой в
+    коде приложения: повторная попытка того же канала проголосовать за то
+    же видео физически не может создать вторую строку, это UPSERT
+    (переключение лайк↔дизлайк) или DELETE (отмена голоса) — см.
+    main.py:react_to_video.
+    """
+    __tablename__ = "video_reactions"
+
+    video_id: Mapped[str] = mapped_column(ForeignKey("videos.video_id"), primary_key=True)
+    channel_id: Mapped[str] = mapped_column(ForeignKey("channels.channel_id"), primary_key=True)
+    value: Mapped[int] = mapped_column(Integer, nullable=False)  # +1 лайк, -1 дизлайк
+    # Анти-replay ЭТОЙ КОНКРЕТНОЙ пары (video_id, channel_id) — сравнивается
+    # с уже сохранённым значением при UPSERT, так же как Channel.studio_updated_at.
+    updated_at: Mapped[str] = mapped_column(String(40), nullable=False)
+
+
+class Comment(Base):
+    """
+    Комментарий. Тело ограничено на уровне схемы (см. schemas.py:
+    CommentCreateRequest — 2000 символов БЕЗ учёта пробелов) — при таком
+    лимите комментарий всегда маленькая строка, специально ужимать
+    хранение не нужно; единственный реальный рычаг экономии места —
+    отсутствие истории правок (правки не поддерживаются: комментарий либо
+    есть, либо removed=True, как у Video/Channel при модерации) и
+    отсутствие полнотекстового индекса под комментарии (не нужен —
+    показываются только пагинированным списком под конкретным видео).
+
+    client_nonce — часть подписанной клиентом (мостом) записи, UNIQUE:
+    защита от replay-атаки (без него повторная отправка того же
+    подписанного запроса создавала бы дубликат комментария на каждый
+    повтор, а не отклонялась бы как уже применённая).
+    """
+    __tablename__ = "comments"
+
+    id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
+    video_id: Mapped[str] = mapped_column(ForeignKey("videos.video_id"), nullable=False, index=True)
+    channel_id: Mapped[str] = mapped_column(ForeignKey("channels.channel_id"), nullable=False)
+    body: Mapped[str] = mapped_column(String(10000), nullable=False)
+    client_nonce: Mapped[str] = mapped_column(String(64), nullable=False, unique=True)
+    created_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
+
+    removed: Mapped[bool] = mapped_column(default=False)
+    removed_reason: Mapped[str] = mapped_column(Text, default="")
 
 
 class RateLimitConfig(Base):
