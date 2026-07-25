@@ -4,11 +4,37 @@
     <h1>{{ t('publish.title') }}</h1>
     <p>{{ t('publish.description') }}</p>
 
-    <button id="publish-btn">{{ t('publish.button') }}</button>
-    <div id="publish-status"></div>
+    <div id="publish-file-step" class="publish-container">
+        <button id="choose-file-btn" class="btn-primary">{{ t('publish.choose_file_btn') }}</button>
+        <div id="chosen-file-info" class="form-hint" style="display:none">
+            <span>{{ t('publish.file_chosen') }}</span><strong id="chosen-file-name"></strong>
+            <button id="change-file-btn" type="button" class="btn-secondary">{{ t('publish.change_file_btn') }}</button>
+        </div>
+    </div>
+
+    <form id="publish-form" class="publish-container" style="display:none">
+        <div class="form-row">
+            <label for="video-title">{{ t('publish.title_label') }}</label>
+            <input type="text" id="video-title" name="title"
+                   placeholder="{{ t('publish.title_placeholder') }}" maxlength="200" required>
+        </div>
+        <div class="form-row">
+            <label for="video-description">{{ t('publish.description_label') }}</label>
+            <textarea id="video-description" name="description" rows="6"
+                      placeholder="{{ t('publish.description_placeholder') }}"></textarea>
+        </div>
+        <button type="submit" id="publish-submit-btn" class="btn-primary">{{ t('publish.button') }}</button>
+    </form>
+
+    <div id="publish-status" class="publish-container"></div>
 
     <script>
         const BRIDGE_URL = "http://127.0.0.1:9080";
+
+        // publish-сессия, полученная от моста на шаге выбора файла
+        // (start_publish) и нужная на шаге отправки формы (finish_publish) —
+        // сам файл на сайт никогда не попадает, только этот идентификатор.
+        let publishSessionId = null;
 
         async function getOrCreateToken() {
             let token = localStorage.getItem("itubep_bridge_token");
@@ -31,15 +57,29 @@
             return data.token;
         }
 
-        document.getElementById("publish-btn").addEventListener("click", async () => {
-            const statusEl = document.getElementById("publish-status");
-            statusEl.textContent = window.t("publish.status_pairing");
+        const chooseFileBtn = document.getElementById("choose-file-btn");
+        const chosenFileInfo = document.getElementById("chosen-file-info");
+        const chosenFileName = document.getElementById("chosen-file-name");
+        const changeFileBtn = document.getElementById("change-file-btn");
+        const publishForm = document.getElementById("publish-form");
+        const publishSubmitBtn = document.getElementById("publish-submit-btn");
+        const statusEl = document.getElementById("publish-status");
 
+        function resetFileSelection() {
+            publishSessionId = null;
+            chosenFileInfo.style.display = "none";
+            chooseFileBtn.style.display = "";
+            publishForm.style.display = "none";
+        }
+
+        chooseFileBtn.addEventListener("click", async () => {
+            statusEl.textContent = window.t("publish.status_pairing");
+            chooseFileBtn.disabled = true;
             try {
                 const token = await getOrCreateToken();
-                statusEl.textContent = window.t("publish.status_wizard");
+                statusEl.textContent = window.t("publish.status_choosing");
 
-                const resp = await fetch(`${BRIDGE_URL}/bridge/publish`, {
+                const resp = await fetch(`${BRIDGE_URL}/bridge/publish/pick_file`, {
                     method: "POST",
                     headers: { "Authorization": `Bearer ${token}` },
                 });
@@ -50,10 +90,76 @@
                 }
 
                 const data = await resp.json();
-                statusEl.innerHTML = window.t("publish.status_published") +
-                    `<a href="/video/${data.video_id}">${window.t("publish.open_video")}</a>`;
+                publishSessionId = data.publish_session_id;
+                chosenFileName.textContent = data.filename;
+                chosenFileInfo.style.display = "";
+                chooseFileBtn.style.display = "none";
+                publishForm.style.display = "";
+                statusEl.textContent = "";
             } catch (e) {
                 statusEl.textContent = window.t("publish.status_error") + e.message;
+            } finally {
+                chooseFileBtn.disabled = false;
+            }
+        });
+
+        changeFileBtn.addEventListener("click", () => {
+            resetFileSelection();
+            statusEl.textContent = "";
+        });
+
+        publishForm.addEventListener("submit", async (e) => {
+            e.preventDefault();
+            statusEl.textContent = "";
+
+            if (!publishSessionId) {
+                statusEl.textContent = window.t("publish.status_error") + window.t("publish.error_no_file");
+                return;
+            }
+            const title = document.getElementById("video-title").value.trim();
+            if (!title) {
+                statusEl.textContent = window.t("publish.status_error") + window.t("publish.error_no_title");
+                return;
+            }
+            const description = document.getElementById("video-description").value.trim();
+
+            publishSubmitBtn.disabled = true;
+            statusEl.textContent = window.t("publish.status_publishing");
+
+            try {
+                const token = await getOrCreateToken();
+
+                const resp = await fetch(`${BRIDGE_URL}/bridge/publish/submit`, {
+                    method: "POST",
+                    headers: {
+                        "Content-Type": "application/json",
+                        "Authorization": `Bearer ${token}`,
+                    },
+                    body: JSON.stringify({
+                        publish_session_id: publishSessionId,
+                        title: title,
+                        description: description,
+                    }),
+                });
+
+                if (!resp.ok) {
+                    const err = await resp.json();
+                    throw new Error(err.error || window.t("publish.error_unknown"));
+                }
+
+                const data = await resp.json();
+                statusEl.innerHTML = window.t("publish.status_published") +
+                    `<a href="/video/${data.video_id}">${window.t("publish.open_video")}</a>`;
+
+                // Сессия одноразовая — на мосте она уже удалена после успешного
+                // finish_publish, приводим форму в исходное состояние, чтобы
+                // повторный сабмит не пытался переиспользовать тот же id.
+                resetFileSelection();
+                publishForm.reset();
+            } catch (e) {
+                statusEl.textContent = window.t("publish.status_error") + e.message;
+            } finally {
+                publishSubmitBtn.disabled = false;
             }
         });
     </script>

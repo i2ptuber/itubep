@@ -153,10 +153,36 @@ def create_app(policy: BridgePolicy) -> web.Application:
         policy.remove_torrent(token, torrent_id, delete_local_data=body.get("delete_local_data", False))
         return web.json_response({"status": "ok"})
     
-    async def publish(request: web.Request):
+    async def publish_pick_file(request: web.Request):
+        """
+        Шаг 1 публикации: подтверждение запроса на мосте + выбор
+        локального видеофайла. Название/описание сайт присылает отдельным
+        запросом — см. publish_submit.
+        """
         token = _extract_token(request)
         try:
-            result = policy.publish_video(token)
+            result = policy.start_publish(token)
+        except PermissionDenied:
+            raise
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+        return web.json_response(result)
+
+    async def publish_submit(request: web.Request):
+        """Шаг 2 публикации: название/описание с сайта для уже выбранного файла."""
+        token = _extract_token(request)
+        body = await request.json()
+
+        publish_session_id = body.get("publish_session_id", "")
+        title = body.get("title", "")
+        description = body.get("description", "")
+        if not publish_session_id:
+            return web.json_response({"error": "missing publish_session_id"}, status=400)
+
+        try:
+            result = policy.finish_publish(token, publish_session_id, title, description)
+        except PermissionDenied:
+            raise
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
         return web.json_response(result)
@@ -290,7 +316,8 @@ def create_app(policy: BridgePolicy) -> web.Application:
     app.router.add_get("/bridge/playlist", playlist)
     app.router.add_get("/bridge/segment", segment)
 
-    app.router.add_post("/bridge/publish", publish)
+    app.router.add_post("/bridge/publish/pick_file", publish_pick_file)
+    app.router.add_post("/bridge/publish/submit", publish_submit)
     
     app.router.add_post("/bridge/pair/request", pair_request)
     app.router.add_post("/bridge/pair/confirm", pair_confirm)

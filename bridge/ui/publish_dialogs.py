@@ -1,6 +1,7 @@
 """
 publish_dialogs.py — GUI-шаги мастера публикации: подтверждение, предупреждение
-о ключе, выбор файла, ввод названия/описания.
+о ключе, выбор файла. Название/описание видео заполняются на сайте, не здесь —
+см. site/templates/publish.html и BridgePolicy.start_publish/finish_publish.
 """
 
 from __future__ import annotations
@@ -206,36 +207,6 @@ class PublishDialogs:
         )
         root.destroy()
         return path or None
-
-    def prompt_title_description(self) -> tuple[str, str] | None:
-        result = {"title": None, "description": None}
-        root = tk.Tk()
-        root.title(t("publish.video_data_title"))
-        root.attributes("-topmost", True)
-
-        frame = ttk.Frame(root, padding=20)
-        frame.pack(fill="both", expand=True)
-
-        ttk.Label(frame, text=t("publish.title_label")).pack(anchor="w")
-        title_var = tk.StringVar()
-        ttk.Entry(frame, textvariable=title_var, width=50).pack(anchor="w", fill="x")
-
-        ttk.Label(frame, text=t("publish.description_label")).pack(anchor="w", pady=(10, 0))
-        desc_text = tk.Text(frame, width=50, height=6)
-        desc_text.pack(anchor="w", fill="x")
-
-        def on_publish():
-            result["title"] = title_var.get().strip()
-            result["description"] = desc_text.get("1.0", "end").strip()
-            root.destroy()
-
-        ttk.Button(frame, text=t("publish.publish_btn"), command=on_publish).pack(pady=(15, 0))
-
-        root.mainloop()
-
-        if not result["title"]:
-            return None
-        return result["title"], result["description"]
 
     def _prompt_text(self, title: str, prompt: str) -> str | None:
         result = {"value": None}

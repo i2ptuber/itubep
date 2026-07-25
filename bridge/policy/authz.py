@@ -82,6 +82,19 @@ class BridgePolicy:
         STREAM_TOKEN_TTL_SECONDS = 6 * 60 * 60  # 6 часов — с запасом на сессию просмотра
         self._stream_token_ttl = STREAM_TOKEN_TTL_SECONDS
 
+        # Публикация теперь разбита на два HTTP-запроса с сайта (см.
+        # start_publish/finish_publish ниже): сначала подтверждение +
+        # выбор локального файла (это может делать только мост — у сайта
+        # в браузере нет доступа к файловой системе), затем, уже отдельным
+        # запросом, название/описание, которые пользователь заполняет
+        # прямо на сайте. Между этими двумя запросами мост должен помнить,
+        # какой файл был выбран для какого origin — publish-сессия и
+        # хранит эту связку. Только в памяти (как и stream-токены) — это
+        # не данные для восстановления между перезапусками моста, при
+        # рестарте пользователь просто выбирает файл заново.
+        self._publish_sessions: dict[str, dict] = {}
+        self._publish_session_ttl = 30 * 60  # 30 минут — с запасом на заполнение формы на сайте
+
     # --- Pairing (см. pairing.py, тут просто проброс) ---
 
     def request_pairing(self, origin: str) -> dict:
@@ -206,11 +219,21 @@ class BridgePolicy:
     def mode(self, value: Mode):
         self.storage.set_setting("mode", value.value)
         
-    def publish_video(self, token: str, video_path_hint: str | None = None) -> dict:
+    def start_publish(self, token: str) -> dict:
         """
-        Полный мастер публикации: подтверждение -> (создание канала при
-        необходимости) -> выбор файла -> название/описание -> сегментация ->
-        торрент -> отправка на сайт.
+        Первый шаг публикации, целиком на стороне моста: подтверждение
+        пользователем самого факта, что сайт просит опубликовать видео
+        (это может подтвердить только пользователь, не сайт), создание
+        канала при необходимости, и выбор ЛОКАЛЬНОГО видеофайла — у сайта
+        в браузере нет и не должно быть доступа к файловой системе
+        пользователя, поэтому выбор файла не может переехать на сайт.
+
+        Название/описание сюда больше не входят — их пользователь
+        заполняет прямо на сайте и присылает вторым запросом, см.
+        finish_publish. Результат этого шага — publish_session_id,
+        связывающий это конкретное открытие/выбор файла с конкретным
+        origin, чтобы finish_publish не могла быть вызвана "из воздуха"
+        с произвольным путём.
         """
         origin = self._authenticate(token)
 
@@ -228,24 +251,82 @@ class BridgePolicy:
         if not video_path:
             raise PermissionDenied("Файл не выбран")
 
-        title_desc = publish_dialogs.prompt_title_description()
-        if title_desc is None:
-            raise PermissionDenied("Название не указано")
-        title, description = title_desc
+        self._cleanup_expired_publish_sessions()
 
-        from pathlib import Path
+        session_id = secrets.token_urlsafe(24)
+        self._publish_sessions[session_id] = {
+            "origin": origin,
+            "video_path": video_path,
+            "expires_at": time.monotonic() + self._publish_session_ttl,
+        }
+
+        return {
+            "publish_session_id": session_id,
+            # Имя файла — просто чтобы сайт мог показать пользователю "выбран
+            # файл: <имя>" для обратной связи. Полный путь на сайт не уходит.
+            "filename": Path(video_path).name,
+        }
+
+    def finish_publish(
+        self, token: str, publish_session_id: str, title: str, description: str,
+    ) -> dict:
+        """
+        Второй шаг: название/описание, заполненные пользователем на сайте,
+        для файла, выбранного на шаге start_publish В ЭТОЙ ЖЕ сессии.
+        Запускает сегментацию (ffmpeg) + сборку торрента + отправку
+        манифеста на сайт (см. VideoPublisher.publish).
+        """
+        origin = self._authenticate(token)
+
+        title = (title or "").strip()
+        if not title:
+            raise PermissionDenied("Название не указано")
+
+        session = self._publish_sessions.get(publish_session_id)
+        if session is None or time.monotonic() > session["expires_at"]:
+            self._publish_sessions.pop(publish_session_id, None)
+            raise PermissionDenied(
+                "Сессия публикации не найдена или истекла — выберите файл заново"
+            )
+        # КРИТИЧНО: сессия привязана к origin, выполнившему start_publish —
+        # без этой проверки любой другой сопряжённый сайт, узнав/угадав
+        # чужой publish_session_id, мог бы опубликовать выбранный для
+        # ПЕРВОГО сайта файл от имени того же канала, но с собственными
+        # title/description на своём origin (site_base_url = origin, ниже).
+        if session["origin"] != origin:
+            raise PermissionDenied("Сессия публикации принадлежит другому сайту")
+
+        # Одноразовая сессия: повторный finish_publish с тем же
+        # publish_session_id не должен повторно запускать сегментацию и
+        # заново публиковать тот же файл (например, при повторном клике
+        # или повторе запроса из-за сетевого сбоя на стороне сайта).
+        del self._publish_sessions[publish_session_id]
+
+        channel = self._channel_identity
+        if channel is None:
+            # Не должно происходить в норме (start_publish уже создаёт
+            # канал до выдачи publish_session_id), но на случай рестарта
+            # моста между шагами — явная ошибка вместо AttributeError ниже.
+            raise PermissionDenied("Канал не инициализирован — начните публикацию заново")
+
         publisher = VideoPublisher(self.snark, channel, http_proxy=self.storage.get_i2p_http_proxy())
         try:
             result = publisher.publish(
-                video_path=Path(video_path),
+                video_path=Path(session["video_path"]),
                 title=title,
-                description=description,
+                description=description or "",
                 site_base_url=origin,  # публикуем на тот же сайт, что и запросил
             )
         except PublishError as e:
             raise PermissionDenied(f"Ошибка публикации: {e}")
 
         return result
+
+    def _cleanup_expired_publish_sessions(self) -> None:
+        now = time.monotonic()
+        expired = [sid for sid, s in self._publish_sessions.items() if now > s["expires_at"]]
+        for sid in expired:
+            del self._publish_sessions[sid]
         
     # --- "Мой канал" / студия / настройки моста, вызываемые из меню сайта ---
 

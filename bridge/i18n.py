@@ -214,10 +214,6 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "publish.choose_file_title": "Выберите видеофайл",
         "publish.filetype_video": "Видео",
         "publish.filetype_all": "Все файлы",
-        "publish.video_data_title": "Данные видео",
-        "publish.title_label": "Название:",
-        "publish.description_label": "Описание:",
-        "publish.publish_btn": "Опубликовать",
         "publish.ok_btn": "OK",
 
         # --- assemble_video.py (CLI) ---
@@ -370,10 +366,6 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "publish.choose_file_title": "Choose a video file",
         "publish.filetype_video": "Video",
         "publish.filetype_all": "All files",
-        "publish.video_data_title": "Video details",
-        "publish.title_label": "Title:",
-        "publish.description_label": "Description:",
-        "publish.publish_btn": "Publish",
         "publish.ok_btn": "OK",
 
         # --- assemble_video.py (CLI) ---
