@@ -183,8 +183,17 @@ async function initPlayer() {
             const hls = new Hls({
                 manifestLoadingTimeOut: 20000,
                 fragLoadingTimeOut: 60000, // сегменты могут ещё докачиваться через торрент
-                fragLoadingMaxRetry: 20,
+                // Раньше было 20 попыток — этого категорически не хватает,
+                // когда сегмент реально докачивается через BT ещё несколько
+                // минут: hls.js исчерпывал бюджет ретраев, помечал фрагмент
+                // фатальной ошибкой и переставал его когда-либо перезапрашивать,
+                // даже если сегмент потом успевал докачаться на бридже.
+                // 1000 попыток с потолком backoff в 8с — это фактически
+                // "проверяй каждые ~8 секунд, пока не появится", без
+                // отдельного кастомного поллинга.
+                fragLoadingMaxRetry: 1000,
                 fragLoadingRetryDelay: 2000,
+                fragLoadingMaxRetryTimeout: 8000,
             });
             hls.loadSource(playlistUrl);
             hls.attachMedia(videoEl);
@@ -192,6 +201,20 @@ async function initPlayer() {
                 statusEl.textContent = window.t("player.status_ready");
                 fallbackEl.style.display = "none";
             });
+            // Счётчик подряд идущих "фатальных" ошибок загрузки одного и
+            // того же зависшего фрагмента — сбрасывается при любой успешной
+            // докачке фрагмента. Верхняя граница нужна только на случай
+            // действительно безнадёжно зависшего сегмента (рой пропал и
+            // т.п.), чтобы не долбить hls.js бесконечно — на практике за
+            // ~200 попыток по 5с (≈16 минут) сегмент либо докачается, либо
+            // дело не в докачке.
+            let fragRecoveryAttempts = 0;
+            const MAX_FRAG_RECOVERY_ATTEMPTS = 200;
+
+            hls.on(Hls.Events.FRAG_LOADED, () => {
+                fragRecoveryAttempts = 0;
+            });
+
             hls.on(Hls.Events.ERROR, (event, data) => {
                 console.warn("HLS.js событие ошибки:", data);
 
@@ -205,6 +228,27 @@ async function initPlayer() {
 
                 if (isFragmentNotReady) {
                     statusEl.textContent = window.t("player.status_loading_fragments");
+
+                    if (data.fatal) {
+                        // hls.js исчерпал свой внутренний бюджет ретраев и
+                        // считает фрагмент безнадёжным — но через торрент он
+                        // вполне может докачаться чуть позже. startLoad()
+                        // сбрасывает внутреннее состояние загрузки и
+                        // продолжает с текущей позиции воспроизведения, то
+                        // есть hls.js снова начинает запрашивать тот же (и
+                        // следующие) сегмент(ы), как будто ретраи ещё не
+                        // кончались.
+                        if (fragRecoveryAttempts < MAX_FRAG_RECOVERY_ATTEMPTS) {
+                            fragRecoveryAttempts++;
+                            const attempt = fragRecoveryAttempts;
+                            setTimeout(() => {
+                                console.log(`[itubep] возобновляю загрузку после фатальной ошибки фрагмента (попытка ${attempt})`);
+                                hls.startLoad();
+                            }, 5000);
+                        } else {
+                            statusEl.textContent = window.t("player.status_playback_error") + data.details;
+                        }
+                    }
                     return;
                 }
 
