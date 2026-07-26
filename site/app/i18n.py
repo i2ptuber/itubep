@@ -85,6 +85,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "studio.access_public": "Public",
         "studio.access_unlisted": "Unlisted (link only)",
         "studio.access_private": "Private (not served by the site)",
+        "studio.nsfw_label": "NSFW",
+        "studio.nsfw_checkbox": "Contains NSFW content",
         "studio.save_button": "Save changes",
         "studio.status_saving": "Saving...",
         "studio.status_saved": "Saved",
@@ -148,6 +150,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "rules.item_legal": "Content must not violate the laws applicable to the site operator.",
         "rules.item_description": "Descriptions should be relevant to the video — no unrelated "
                                     "spam, repeated mass keyword stuffing or links to illegal materials.",
+        "rules.item_nsfw": "Videos with clearly NSFW content (porn and gore) must be marked as NSFW on publication.",
         "rules.item_harm": "No content that promotes violence, or clearly illegal "
                             "activity.",
         "rules.item_moderation": "Violations may result in a video being removed or a channel "
@@ -167,6 +170,11 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "publish.title_placeholder": "Video title",
         "publish.description_label": "Description",
         "publish.description_placeholder": "Video description (optional)",
+        "publish.nsfw_label": "NSFW content",
+        "publish.nsfw_hint": "Required — mark whether this video contains NSFW content. "
+                              "You can change this later from the Studio.",
+        "publish.nsfw_no": "No",
+        "publish.nsfw_yes": "Yes, this video is NSFW",
         "publish.button": "Publish video",
         "publish.status_publishing": "Publishing — this can take a while depending on the video length...",
         "publish.status_published": "Published! ",
@@ -174,6 +182,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "publish.status_error": "Error: ",
         "publish.error_no_file": "Choose a video file first",
         "publish.error_no_title": "Enter a title",
+        "publish.error_no_nsfw_choice": "Choose whether this video contains NSFW content",
         "publish.enter_code_prompt": "Enter the confirmation code from the ITubeP Bridge window:",
         "publish.error_no_code": "No code entered",
         "publish.error_bad_code": "Invalid code or denied by the bridge",
@@ -256,6 +265,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "studio.access_public": "Открытый",
         "studio.access_unlisted": "По ссылке",
         "studio.access_private": "Ограниченный (не отдаётся сайтом)",
+        "studio.nsfw_label": "NSFW",
+        "studio.nsfw_checkbox": "Содержит NSFW-контент",
         "studio.save_button": "Сохранить изменения",
         "studio.status_saving": "Сохранение...",
         "studio.status_saved": "Сохранено",
@@ -319,6 +330,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "rules.item_legal": "Контент не должен нарушать законодательство, применимое к оператору сайта.",
         "rules.item_description": "Описания должны относиться к видео — без постороннего спама, "
                                     "массового повторения ключевых слов и ссылок на незаконные материалы.",
+        "rules.item_nsfw": "Видео с откровенным NSFW контентом (порно и 'gore') должны быть отмечены как NSFW при публикации",
         "rules.item_harm": "Запрещён контент, пропагандирующий насилие, или явно "
                             "незаконную деятельность.",
         "rules.item_moderation": "Нарушения могут привести к удалению видео или блокировке канала "
@@ -338,6 +350,11 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "publish.title_placeholder": "Название видео",
         "publish.description_label": "Описание",
         "publish.description_placeholder": "Описание видео (необязательно)",
+        "publish.nsfw_label": "NSFW-контент",
+        "publish.nsfw_hint": "Обязательно — отметьте, содержит ли это видео NSFW-контент. "
+                              "Позже это можно изменить в Студии.",
+        "publish.nsfw_no": "Нет",
+        "publish.nsfw_yes": "Да, это видео NSFW",
         "publish.button": "Опубликовать видео",
         "publish.status_publishing": "Публикация — это может занять время в зависимости от длины видео...",
         "publish.status_published": "Опубликовано! ",
@@ -345,6 +362,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "publish.status_error": "Ошибка: ",
         "publish.error_no_file": "Сначала выберите видеофайл",
         "publish.error_no_title": "Введите название",
+        "publish.error_no_nsfw_choice": "Отметьте, содержит ли это видео NSFW-контент",
         "publish.enter_code_prompt": "Введите код подтверждения из окна ITubeP Bridge:",
         "publish.error_no_code": "Код не введён",
         "publish.error_bad_code": "Неверный код или отклонено на мосте",

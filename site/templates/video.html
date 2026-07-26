@@ -1,7 +1,7 @@
 {% extends "base.html" %}
 {% block title %}{{ video.title }} — ITubeP{% endblock %}
 {% block content %}
-    <h1>{{ video.title }}</h1>
+    <h1>{{ video.title }}{% if video.nsfw %}<span class="nsfw-badge-inline">NSFW</span>{% endif %}</h1>
     <p><a href="/channel/{{ video.channel_id }}">{{ channel_display_name }}</a></p>
 
     <!-- Плеер: рендерится только если JS включён и мост доступен -->

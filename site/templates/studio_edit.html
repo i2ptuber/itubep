@@ -81,6 +81,14 @@
                 <div class="studio-edit-side-block-label">🔒 {{ t('studio.access_label') }}</div>
                 <select id="edit-access" class="studio-access-select"></select>
             </div>
+
+            <div class="studio-edit-side-block">
+                <div class="studio-edit-side-block-label">⚠ {{ t('studio.nsfw_label') }}</div>
+                <label class="studio-nsfw-checkbox-row">
+                    <input type="checkbox" id="edit-nsfw">
+                    <span>{{ t('studio.nsfw_checkbox') }}</span>
+                </label>
+            </div>
         </aside>
         </div>
     </div>
@@ -101,6 +109,7 @@ document.addEventListener("DOMContentLoaded", function () {
     var titleEl = document.getElementById("edit-title");
     var descriptionEl = document.getElementById("edit-description");
     var accessEl = document.getElementById("edit-access");
+    var nsfwEl = document.getElementById("edit-nsfw");
 
     var sideThumbImg = document.getElementById("edit-side-thumb");
     var sideThumbPlaceholder = document.getElementById("edit-side-thumb-placeholder");
@@ -145,8 +154,12 @@ document.addEventListener("DOMContentLoaded", function () {
         titleEl.value = v.title;
         descriptionEl.value = v.description || "";
         accessEl.value = v.access_level || "public";
+        nsfwEl.checked = !!v.nsfw;
 
-        original = { title: v.title, description: v.description || "", access_level: v.access_level || "public" };
+        original = {
+            title: v.title, description: v.description || "",
+            access_level: v.access_level || "public", nsfw: !!v.nsfw,
+        };
 
         sideTitleEl.textContent = v.title;
         sideDurationEl.textContent = formatDuration(v.duration_seconds);
@@ -207,6 +220,7 @@ document.addEventListener("DOMContentLoaded", function () {
         titleEl.value = original.title;
         descriptionEl.value = original.description;
         accessEl.value = original.access_level;
+        nsfwEl.checked = original.nsfw;
         statusEl.textContent = window.t("studio.status_discarded");
     });
 
@@ -263,6 +277,7 @@ document.addEventListener("DOMContentLoaded", function () {
             title: titleEl.value.trim(),
             description: descriptionEl.value.trim(),
             access_level: accessEl.value,
+            nsfw: nsfwEl.checked,
         };
 
         (async function () {
@@ -281,7 +296,10 @@ document.addEventListener("DOMContentLoaded", function () {
                     var data = await resp.json().catch(function () { return {}; });
                     throw new Error(data.error || "bridge error");
                 }
-                original = { title: payload.title, description: payload.description, access_level: payload.access_level };
+                original = {
+                    title: payload.title, description: payload.description,
+                    access_level: payload.access_level, nsfw: payload.nsfw,
+                };
                 statusEl.textContent = window.t("studio.status_saved");
             } catch (err) {
                 statusEl.textContent = window.t("studio.status_error") + err.message;

@@ -73,6 +73,14 @@ class VideoManifest(BaseModel):
     # Сайт сверяет с ним sha256 РЕАЛЬНО присланного файла превью ДО того,
     # как сохранить его — см. main.py:publish_video.
     thumbnail_sha256: str | None = Field(None, min_length=64, max_length=64)
+    # Обязательная авторская отметка "содержит ли видео NSFW-контент" —
+    # часть подписанной записи, как title/description. Сайт требует
+    # присутствия этого поля при публикации (main.py:publish_video), но
+    # ПОСЛЕ публикации значение хранится и правится отдельной, site-side
+    # мутируемой колонкой Video.nsfw (см. models.py) — то есть эта копия
+    # в манифесте остаётся историческим свидетельством того, что автор
+    # заявил в момент публикации, а не единственным источником истины.
+    nsfw: bool
     signature: str
     
 class SearchResultItem(BaseModel):
@@ -100,6 +108,7 @@ class VideoListItem(BaseModel):
     comment_count: int = 0
     published_at: str
     access_level: str = "public"
+    nsfw: bool = False
     has_thumbnail: bool = False
     # Модерация держателем сайта (см. scripts/moderate.py) — раньше
     # /api/channel/{id}/studio-state полностью исключал такие видео из
@@ -179,6 +188,14 @@ class StudioVideoUpdateRequest(BaseModel):
     title: str = Field(..., min_length=1, max_length=300)
     description: str = Field("", max_length=5000)
     access_level: str = "public"
+    # Правка авторской NSFW-отметки постфактум — тот же смысл, что при
+    # публикации (см. VideoManifest.nsfw), просто через студию, без
+    # переподписи/переиздания видео. Обязательного значения по умолчанию
+    # намеренно нет (False допустим здесь, в отличие от публикации) —
+    # bridge/policy/authz.py:update_video_details всегда передаёт текущее
+    # состояние, вычитанное из студии, так что дефолт практически не
+    # используется, но нужен, чтобы не ломать совместимость на уровне схемы.
+    nsfw: bool = False
     updated_at: str
     audience_origin: str = Field(..., min_length=1)
     signature: str = Field(..., min_length=1)

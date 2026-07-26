@@ -10,12 +10,15 @@ import sys
 import tkinter as tk
 from tkinter import ttk, filedialog
 
+from .gui_thread import ensure_display
+
 sys.path.insert(0, ".")
 from i18n import t
 
 
 class PublishDialogs:
     def show_key_warning(self) -> bool:
+        ensure_display()
         result = {"approved": False}
         root = tk.Tk()
         root.title(t("publish.create_channel_title"))
@@ -75,6 +78,7 @@ class PublishDialogs:
         (немного другой текст, объясняющий, что происходит и почему).
         """
         result = {"password": None}
+        ensure_display()
         root = tk.Tk()
         root.title(t("publish.password_title"))
         root.attributes("-topmost", True)
@@ -144,6 +148,7 @@ class PublishDialogs:
     def prompt_unlock_password(self, attempt: int = 1) -> str | None:
         """Запрашивает пароль для разблокировки уже существующего ключа."""
         result = {"password": None}
+        ensure_display()
         root = tk.Tk()
         root.title(t("publish.unlock_title"))
         root.attributes("-topmost", True)
@@ -176,6 +181,7 @@ class PublishDialogs:
 
     def confirm_publish_request(self, origin: str) -> bool:
         result = {"approved": False}
+        ensure_display()
         root = tk.Tk()
         root.attributes("-topmost", True)
         root.title(t("publish.request_title"))
@@ -199,6 +205,7 @@ class PublishDialogs:
         return result["approved"]
 
     def choose_video_file(self) -> str | None:
+        ensure_display()
         root = tk.Tk()
         root.withdraw()
         path = filedialog.askopenfilename(
@@ -214,6 +221,7 @@ class PublishDialogs:
         диалога) означает "без превью", а не ошибку: в отличие от выбора
         видеофайла, это не обязательный шаг мастера публикации.
         """
+        ensure_display()
         root = tk.Tk()
         root.withdraw()
         path = filedialog.askopenfilename(
@@ -228,6 +236,7 @@ class PublishDialogs:
 
     def _prompt_text(self, title: str, prompt: str) -> str | None:
         result = {"value": None}
+        ensure_display()
         root = tk.Tk()
         root.title(title)
         root.attributes("-topmost", True)

@@ -169,18 +169,21 @@ def create_app(policy: BridgePolicy) -> web.Application:
         return web.json_response(result)
 
     async def publish_submit(request: web.Request):
-        """Шаг 2 публикации: название/описание с сайта для уже выбранного файла."""
+        """Шаг 2 публикации: название/описание/NSFW-отметка с сайта для уже выбранного файла."""
         token = _extract_token(request)
         body = await request.json()
 
         publish_session_id = body.get("publish_session_id", "")
         title = body.get("title", "")
         description = body.get("description", "")
+        nsfw = body.get("nsfw")
         if not publish_session_id:
             return web.json_response({"error": "missing publish_session_id"}, status=400)
+        if not isinstance(nsfw, bool):
+            return web.json_response({"error": "missing or non-boolean nsfw"}, status=400)
 
         try:
-            result = policy.finish_publish(token, publish_session_id, title, description)
+            result = policy.finish_publish(token, publish_session_id, title, description, nsfw)
         except PermissionDenied:
             raise
         except Exception as e:
@@ -303,15 +306,27 @@ def create_app(policy: BridgePolicy) -> web.Application:
         title = body.get("title", "")
         description = body.get("description", "")
         access_level = body.get("access_level", "public")
+        nsfw = bool(body.get("nsfw", False))
         if not video_id:
             return web.json_response({"error": "missing video_id"}, status=400)
         try:
-            result = policy.update_video_details(token, video_id, title, description, access_level)
+            result = policy.update_video_details(token, video_id, title, description, access_level, nsfw)
         except PermissionDenied:
             raise
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
         return web.json_response(result)
+
+    async def nsfw_preference(request: web.Request):
+        """
+        Единственный bridge-эндпоинт без токена/пейринга — см. docstring
+        BridgePolicy.get_show_nsfw_preference. cors_middleware (см. выше
+        в этом файле, применяется ко всем маршрутам) всё равно ограничивает
+        вызовы только валидными .i2p/dev-origin, так что это не открытый
+        наружу эндпоинт, просто без пары "токен ⇄ origin".
+        Вызывается static/nsfw-sync.js на каждой странице сайта.
+        """
+        return web.json_response({"show_nsfw": policy.get_show_nsfw_preference()})
 
     async def react(request: web.Request):
         token = _extract_token(request)
@@ -363,6 +378,7 @@ def create_app(policy: BridgePolicy) -> web.Application:
     app.router.add_post("/bridge/studio/state", studio_state)
     app.router.add_post("/bridge/studio/thumbnail", studio_thumbnail)
     app.router.add_post("/bridge/studio/video_update", studio_video_update)
+    app.router.add_get("/bridge/nsfw_preference", nsfw_preference)
     app.router.add_post("/bridge/react", react)
     app.router.add_post("/bridge/comment", comment)
 

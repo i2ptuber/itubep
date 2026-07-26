@@ -274,13 +274,17 @@ class BridgePolicy:
         }
 
     def finish_publish(
-        self, token: str, publish_session_id: str, title: str, description: str,
+        self, token: str, publish_session_id: str, title: str, description: str, nsfw: bool,
     ) -> dict:
         """
         Второй шаг: название/описание, заполненные пользователем на сайте,
         для файла, выбранного на шаге start_publish В ЭТОЙ ЖЕ сессии.
         Запускает сегментацию (ffmpeg) + сборку торрента + отправку
-        манифеста на сайт (см. VideoPublisher.publish).
+        манифеста на сайт (см. VideoPublisher.publish). nsfw — обязательная
+        авторская отметка с формы публикации (сайт требует явный bool в
+        манифесте и без него отклонит публикацию, см. site/app/main.py:
+        publish_video), мост тут её не домысливает и не подставляет
+        дефолт — просто передаёт то, что реально выбрал автор.
         """
         origin = self._authenticate(token)
 
@@ -326,6 +330,7 @@ class BridgePolicy:
                 title=title,
                 description=description or "",
                 site_base_url=origin,  # публикуем на тот же сайт, что и запросил
+                nsfw=nsfw,
                 thumbnail_path=Path(session["thumbnail_path"]) if session.get("thumbnail_path") else None,
             )
         except PublishError as e:
@@ -340,6 +345,23 @@ class BridgePolicy:
             del self._publish_sessions[sid]
         
     # --- "Мой канал" / студия / настройки моста, вызываемые из меню сайта ---
+
+    def get_show_nsfw_preference(self) -> bool:
+        """
+        Для static/nsfw-sync.js на КАЖДОЙ странице сайта: намеренно БЕЗ
+        _authenticate/токена — в отличие от прочих методов этого раздела,
+        это не действие от имени канала и не чтение чего-либо привязанного
+        к конкретному сопряжённому origin, а одно глобальное локальное
+        предпочтение отображения ("показывать ли на сайтах то, что их
+        авторы сами отметили NSFW"), одинаковое для любого сайта, к
+        которому подключается этот мост. Требовать для него полноценное
+        сопряжение означало бы навязчивый запрос кода подтверждения
+        просто для того, чтобы корректно отрисовать первую же страницу.
+        Слой 1 (http_server.py) всё равно ограничивает CORS только
+        валидными .i2p/dev-origin, так что это не открытый наружу эндпоинт
+        как таковой — просто без пары "токен ⇄ авторизованный origin".
+        """
+        return self.storage.get_show_nsfw()
 
     def get_my_channel_id(self, token: str) -> str | None:
         """
@@ -561,14 +583,17 @@ class BridgePolicy:
         return resp.json()
 
     def update_video_details(
-        self, token: str, video_id: str, title: str, description: str, access_level: str,
+        self, token: str, video_id: str, title: str, description: str, access_level: str, nsfw: bool,
     ) -> dict:
         """
-        Сохранение "Сведений о видео" (title/description/доступ) со
+        Сохранение "Сведений о видео" (title/description/доступ/NSFW) со
         страницы /studio/video/{id} — тот же паттерн подписи, что
         studio_update/update_thumbnail, отдельный эндпоинт под отдельную
         кнопку "Сохранить" именно этой страницы (не смешивается с общим
-        батч-сохранением списка студии).
+        батч-сохранением списка студии). nsfw здесь — постфактум-правка
+        авторской отметки (см. finish_publish/VideoPublisher.publish —
+        там она обязательна при самой публикации), на случай если автор
+        ошибся при заполнении формы публикации.
         """
         import time
         import requests
@@ -594,6 +619,7 @@ class BridgePolicy:
             "title": title,
             "description": description or "",
             "access_level": access_level,
+            "nsfw": bool(nsfw),
             "updated_at": str(time.time()),
             "audience_origin": origin,
         }

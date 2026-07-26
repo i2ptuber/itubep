@@ -344,3 +344,25 @@ body.studio-page main { max-width: none; padding: 0; margin: 0; }
     background: #1a1a1a; color: #eee; cursor: pointer; font-family: inherit;
 }
 #comments-load-more:hover { background: #262626; }
+
+/* --- NSFW: обязательный выбор при публикации, бейджи, чекбокс в студии --- */
+.radio-inline { display: inline-flex; align-items: center; gap: 6px; font-weight: normal; margin-right: 18px; }
+.radio-inline input { margin: 0; }
+
+.video-thumb-wrap { position: relative; }
+.nsfw-badge {
+    position: absolute; top: 6px; left: 6px;
+    background: #e05555; color: #fff; font-size: 0.7em; font-weight: bold;
+    padding: 2px 6px; border-radius: 4px; letter-spacing: 0.03em;
+}
+.nsfw-badge-inline {
+    display: inline-block; background: #e05555; color: #fff;
+    font-size: 0.75em; font-weight: bold; padding: 2px 7px;
+    border-radius: 4px; letter-spacing: 0.03em; margin-left: 8px; vertical-align: middle;
+}
+
+.studio-nsfw-checkbox-row { display: flex; align-items: center; gap: 8px; font-weight: normal; cursor: pointer; }
+.studio-nsfw-checkbox-row input { margin: 0; }
+.studio-nsfw-inline-badge {
+    color: #e05555; font-size: 0.85em; font-weight: bold; margin-left: 6px;
+}

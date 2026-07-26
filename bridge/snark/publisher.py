@@ -176,6 +176,7 @@ class VideoPublisher:
         title: str,
         description: str,
         site_base_url: str,
+        nsfw: bool,
         segment_seconds: int = 3,
         work_dir: Path | None = None,
         thumbnail_path: Path | None = None,
@@ -220,6 +221,12 @@ class VideoPublisher:
                 "segment_durations": durations,
             }],
             "published_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            # Обязательная авторская отметка NSFW — часть подписанных данных,
+            # как title/description (сайт отклоняет публикацию без неё, см.
+            # site/app/main.py:publish_video). Значение приходит с сайта уже
+            # как явный bool (форма /publish требует осознанного выбора Да/
+            # Нет, без варианта по умолчанию — см. templates/publish.html).
+            "nsfw": bool(nsfw),
         }
         if thumbnail_bytes is not None:
             # Часть манифеста, а значит — часть подписанных данных (см.

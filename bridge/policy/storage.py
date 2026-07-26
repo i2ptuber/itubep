@@ -370,6 +370,23 @@ class PolicyStorage:
     def set_max_thumbnail_bytes(self, value: int):
         self.set_setting("max_thumbnail_bytes", str(value))
 
+    def get_show_nsfw(self) -> bool:
+        """
+        Переключатель "показывать ли отмеченный NSFW-контент" — настройка
+        МОСТА (окно настроек, ui/settings_window.py), а не отдельного
+        сайта: один и тот же выбор человека применяется на любом itubep-
+        сайте, который он посещает через этот мост. Читается без пароля/
+        разблокировки ключа канала — это не секрет, просто локальное
+        предпочтение отображения (см. transport/http_server.py:
+        nsfw_preference — единственный НЕавторизованный по токену bridge-
+        эндпоint, ровно потому что тут нечего защищать паролем).
+        Дефолт — False (скрыто): пользователь должен явно включить показ.
+        """
+        return self.get_setting("show_nsfw", "0") == "1"
+
+    def set_show_nsfw(self, value: bool):
+        self.set_setting("show_nsfw", "1" if value else "0")
+
     def find_torrent_for_video(self, owner_origin: str, video_id: str) -> int | None:
         row = self.conn.execute(
             "SELECT torrent_id FROM torrent_ownership WHERE owner_origin = ? AND video_id = ?",

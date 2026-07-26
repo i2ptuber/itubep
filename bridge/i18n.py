@@ -99,6 +99,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.pairing_note_2": "подтверждения независимо от режима выше.",
         "settings.apply_note_1": "Изменения применяются сразу — сервер моста",
         "settings.apply_note_2": "читает настройки при каждом действии.",
+        "settings.nsfw_heading": "Показ NSFW-контента",
+        "settings.nsfw_checkbox": "Показывать видео, отмеченные автором как NSFW",
         "settings.proxy_heading": "HTTP-прокси I2P (для публикации на .i2p-сайты)",
         "settings.proxy_description": (
             "Через этот прокси мост ходит к сайту при публикации видео\n"
@@ -253,6 +255,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.pairing_note_2": "confirmation regardless of the mode above.",
         "settings.apply_note_1": "Changes apply immediately — the bridge server",
         "settings.apply_note_2": "reads settings on every action.",
+        "settings.nsfw_heading": "NSFW content display",
+        "settings.nsfw_checkbox": "Show videos marked by their author as NSFW",
         "settings.proxy_heading": "I2P HTTP proxy (for publishing to .i2p sites)",
         "settings.proxy_description": (
             "The bridge uses this proxy to reach the site when publishing a video\n"

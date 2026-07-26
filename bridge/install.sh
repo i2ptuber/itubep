@@ -1101,7 +1101,22 @@ EOF
     cat > "${SYSTEMD_USER_DIR}/itubep-bridge.service" << EOF
 [Unit]
 Description=ITubeP Bridge
-After=network.target ${AFTER_EXTRA}
+# graphical-session.target (а не только default.target) — мост показывает
+# нативные tkinter-диалоги (подтверждение сопряжения, выбор файла при
+# публикации и т.п.), для которых нужен DISPLAY. При enable-linger ниже
+# systemd-пользовательский менеджер стартует уже при загрузке ОС, ДО входа
+# в систему — без этой привязки юнит с default.target попытался бы
+# запуститься ещё до появления DISPLAY в окружении, а поскольку окружение
+# уже запущенного процесса потом не обновляется, это ломало бы диалоги до
+# ручного перезапуска сервиса. graphical-session.target достигается только
+# когда графическая сессия действительно поднята (современные GNOME/KDE
+# импортируют DISPLAY/WAYLAND_DISPLAY в systemd user env при её достижении).
+# Как дополнительная защита (в т.ч. для минимальных WM без нормальной
+# интеграции с graphical-session.target) мост дополнительно сам
+# перепроверяет и при необходимости донастраивает DISPLAY перед каждым
+# диалогом — см. ui/gui_thread.py:_ensure_display().
+After=network.target graphical-session.target ${AFTER_EXTRA}
+Wants=graphical-session.target
 
 [Service]
 Type=simple
@@ -1112,7 +1127,7 @@ Restart=on-failure
 RestartSec=5
 
 [Install]
-WantedBy=default.target
+WantedBy=graphical-session.target
 EOF
 
     sudo loginctl enable-linger "$USER" 2>/dev/null || warn "$(msg loginctl_fail)"

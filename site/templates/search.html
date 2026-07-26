@@ -6,11 +6,14 @@
             <div class="video-grid">
                 {% for v in results %}
                 <a class="video-card" href="/video/{{ v.video_id }}">
-                    {% if v.has_thumbnail %}
-                        <img class="video-thumb" src="/api/video/{{ v.video_id }}/thumbnail" alt="" loading="lazy">
-                    {% else %}
-                        <div class="video-thumb-placeholder"></div>
-                    {% endif %}
+                    <div class="video-thumb-wrap">
+                        {% if v.has_thumbnail %}
+                            <img class="video-thumb" src="/api/video/{{ v.video_id }}/thumbnail" alt="" loading="lazy">
+                        {% else %}
+                            <div class="video-thumb-placeholder"></div>
+                        {% endif %}
+                        {% if v.nsfw %}<span class="nsfw-badge">NSFW</span>{% endif %}
+                    </div>
                     <div class="video-title">{{ v.title }}</div>
                     <div class="video-meta">{{ v.channel_display_name }} · {{ v.duration_seconds }} {{ t('search.sec') }}</div>
                 </a>
@@ -22,18 +25,25 @@
     {% else %}
         <!-- Главная без поискового запроса: "recent" (8 последних
              опубликованных видео) сверху, "random" (16 случайных) ниже.
-             Вкладка "подписки" появится после механизма подписок. -->
+             Вкладка "подписки" появится после механизма подписок.
+             NSFW-бейдж на карточке появляется только если видео вообще
+             попало в выдачу — то есть только когда показ NSFW включён в
+             настройках моста (см. app/main.py:_show_nsfw); скрытые видео
+             сюда не долетают вовсе, бейдж не единственная защита. -->
         {% if recent_videos or random_videos %}
             {% if recent_videos %}
                 <h2 class="feed-heading">{{ t('search.recent_heading') }}</h2>
                 <div class="video-grid">
                     {% for v in recent_videos %}
                     <a class="video-card" href="/video/{{ v.video_id }}">
-                        {% if v.has_thumbnail %}
-                            <img class="video-thumb" src="/api/video/{{ v.video_id }}/thumbnail" alt="" loading="lazy">
-                        {% else %}
-                            <div class="video-thumb-placeholder"></div>
-                        {% endif %}
+                        <div class="video-thumb-wrap">
+                            {% if v.has_thumbnail %}
+                                <img class="video-thumb" src="/api/video/{{ v.video_id }}/thumbnail" alt="" loading="lazy">
+                            {% else %}
+                                <div class="video-thumb-placeholder"></div>
+                            {% endif %}
+                            {% if v.nsfw %}<span class="nsfw-badge">NSFW</span>{% endif %}
+                        </div>
                         <div class="video-title">{{ v.title }}</div>
                         <div class="video-meta">{{ v.channel_display_name }} · {{ v.duration_seconds }} {{ t('search.sec') }}</div>
                     </a>
@@ -46,11 +56,14 @@
                 <div class="video-grid">
                     {% for v in random_videos %}
                     <a class="video-card" href="/video/{{ v.video_id }}">
-                        {% if v.has_thumbnail %}
-                            <img class="video-thumb" src="/api/video/{{ v.video_id }}/thumbnail" alt="" loading="lazy">
-                        {% else %}
-                            <div class="video-thumb-placeholder"></div>
-                        {% endif %}
+                        <div class="video-thumb-wrap">
+                            {% if v.has_thumbnail %}
+                                <img class="video-thumb" src="/api/video/{{ v.video_id }}/thumbnail" alt="" loading="lazy">
+                            {% else %}
+                                <div class="video-thumb-placeholder"></div>
+                            {% endif %}
+                            {% if v.nsfw %}<span class="nsfw-badge">NSFW</span>{% endif %}
+                        </div>
                         <div class="video-title">{{ v.title }}</div>
                         <div class="video-meta">{{ v.channel_display_name }} · {{ v.duration_seconds }} {{ t('search.sec') }}</div>
                     </a>

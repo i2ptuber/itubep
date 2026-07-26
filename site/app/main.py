@@ -119,6 +119,25 @@ if not SITE_ORIGIN:
     )
 
 
+# --- Показ NSFW-контента ---
+# Сайт полностью server-rendered и не знает "кто" сейчас смотрит (та же
+# логика, что у языка сайта — см. app/i18n.py) — поэтому предпочтение
+# "показывать ли отмеченный NSFW-контент" тоже держится в cookie этого
+# браузера, а не привязывается к channel_id/сессии. Источник истины для
+# самого значения — переключатель в настройках МОСТА (bridge/policy/
+# storage.py:get_show_nsfw); клиентский скрипт (static/nsfw-sync.js)
+# сверяет его с текущей cookie при каждой загрузке страницы и, если они
+# разошлись, обращается к /set-nsfw ниже, чтобы синхронизировать. Дефолт —
+# СКРЫТО (fail-closed): если мост недоступен/не сопряжён, посетитель не
+# должен молча увидеть NSFW-контент только из-за того, что синхронизация
+# не удалась.
+NSFW_COOKIE_NAME = "site_show_nsfw"
+
+
+def _show_nsfw(request: Request) -> bool:
+    return request.cookies.get(NSFW_COOKIE_NAME) == "1"
+
+
 def _require_audience_matches_this_site(record: dict) -> None:
     """
     Проверяет, что подписанная запись (react/comment/studio-update/
@@ -296,7 +315,7 @@ async def update_studio_video(
 ):
     """
     Сохранение "Сведений о видео" со страницы /studio/video/{id} — title/
-    description/access_level ОДНОГО видео. Вызывается мостом (bridge/
+    description/access_level/nsfw ОДНОГО видео. Вызывается мостом (bridge/
     policy/authz.py:update_video_details). Как и /api/channel/{id}/studio,
     это site-side мутируемые колонки Video — исходный подписанный
     manifest_json не трогается (см. docstring StudioVideoUpdateRequest).
@@ -332,6 +351,7 @@ async def update_studio_video(
     video.title = req.title
     video.description = req.description
     video.access_level = req.access_level
+    video.nsfw = req.nsfw
     await session.commit()
 
     return {"status": "ok", "video_id": video.video_id}
@@ -468,6 +488,7 @@ async def studio_state(
                 comment_count=v.comment_count,
                 published_at=v.published_at.isoformat(),
                 access_level=v.access_level,
+                nsfw=v.nsfw,
                 has_thumbnail=v.thumbnail is not None,
                 removed=v.removed,
                 removed_reason=v.removed_reason,
@@ -702,6 +723,18 @@ async def publish_video(
             detail=f"Mismatch: {len(qualities)} qualities in manifest, {len(torrents)} torrent files uploaded",
         )
 
+    # Обязательная авторская отметка NSFW (см. schemas.py:VideoManifest.nsfw
+    # и models.py:Video.nsfw) — сайт требует явного bool, а не молча
+    # трактует отсутствие поля как "не NSFW": это ровно то самоуправление,
+    # которого мы добиваемся — публикация без осознанного выбора должна
+    # быть невозможна, а не просто "по умолчанию безопасна".
+    nsfw = manifest.get("nsfw")
+    if not isinstance(nsfw, bool):
+        raise HTTPException(
+            status_code=400,
+            detail="Manifest must include a boolean \"nsfw\" field",
+        )
+
     thumbnail_bytes: bytes | None = None
     thumbnail_content_type = ""
     if thumbnail is not None:
@@ -719,6 +752,7 @@ async def publish_video(
         signature=manifest["signature"],
         thumbnail=thumbnail_bytes,
         thumbnail_content_type=thumbnail_content_type,
+        nsfw=nsfw,
     )
     session.add(video)
 
@@ -792,6 +826,7 @@ async def get_torrent(
     
 @app.get("/api/search", response_model=SearchResponse)
 async def search_videos(
+    request: Request,
     q: str,
     limit: int = 20,
     session: AsyncSession = Depends(get_session),
@@ -805,6 +840,11 @@ async def search_videos(
 
     # Полнотекстовый поиск PostgreSQL по title + description видео,
     # плюс отдельно по display_name канала (объединяем через UNION по video_id)
+    # AND (:show_nsfw OR v.nsfw = false) — самоуправляемый NSFW-фильтр (см.
+    # NSFW_COOKIE_NAME/_show_nsfw выше): по умолчанию отмеченные NSFW видео
+    # исключены из поиска так же, как забаненные/удалённые, а не просто
+    # визуально помечены — посетитель, не включивший показ NSFW в мосте,
+    # не должен находить их и по прямому текстовому запросу.
     sql = text("""
         SELECT DISTINCT v.video_id, v.title, v.channel_id, c.display_name,
                v.duration_seconds, v.download_count,
@@ -819,11 +859,12 @@ async def search_videos(
           AND v.removed = false
           AND v.access_level = 'public'
           AND c.banned = false
+          AND (:show_nsfw OR v.nsfw = false)
         ORDER BY rank DESC
         LIMIT :limit
     """)
 
-    result = await session.execute(sql, {"query": q, "limit": limit})
+    result = await session.execute(sql, {"query": q, "limit": limit, "show_nsfw": _show_nsfw(request)})
     rows = result.fetchall()
 
     results = [
@@ -842,6 +883,7 @@ async def search_videos(
     
 @app.get("/api/channel/{channel_id}/videos", response_model=ChannelVideosResponse)
 async def get_channel_videos(
+    request: Request,
     channel_id: str,
     limit: int = 20,
     offset: int = 0,
@@ -853,21 +895,29 @@ async def get_channel_videos(
     if channel is None or channel.banned:
         raise HTTPException(status_code=404, detail="Channel not found")
 
+    # Публичный read-путь (в отличие от /studio-state, который отдаёт
+    # владельцу вообще всё) — те же условия видимости, что и на HTML-
+    # странице канала (channel_page ниже): removed/access_level и,
+    # дополнительно, NSFW-фильтр по предпочтению ЭТОГО посетителя. Условие
+    # добавляется в список только если показ NSFW выключен — при show_nsfw
+    # никакого дополнительного фильтра просто нет, а не "заведомо истинное"
+    # SQL-условие (True в списке .where() не является ColumnElement и
+    # SQLAlchemy его не поймёт).
+    filters = [
+        Video.channel_id == channel_id, Video.removed == False,  # noqa: E712
+        Video.access_level == "public",
+    ]
+    if not _show_nsfw(request):
+        filters.append(Video.nsfw == False)  # noqa: E712
+
     count_result = await session.execute(
-        select(func.count()).select_from(Video)
-        .where(
-            Video.channel_id == channel_id, Video.removed == False,  # noqa: E712
-            Video.access_level == "public",
-        )
+        select(func.count()).select_from(Video).where(*filters)
     )
     total = count_result.scalar_one()
 
     result = await session.execute(
         select(Video)
-        .where(
-            Video.channel_id == channel_id, Video.removed == False,  # noqa: E712
-            Video.access_level == "public",
-        )
+        .where(*filters)
         .order_by(Video.published_at.desc())
         .limit(limit)
         .offset(offset)
@@ -885,6 +935,7 @@ async def get_channel_videos(
                 download_count=v.download_count,
                 published_at=v.published_at.isoformat(),
                 access_level=v.access_level,
+                nsfw=v.nsfw,
             )
             for v in videos
         ],
@@ -915,18 +966,43 @@ async def set_lang(request: Request, lang: str, next: str = "/"):
     return response
 
 
+@app.get("/set-nsfw")
+async def set_nsfw(request: Request, show: str, next: str = "/"):
+    """
+    Синхронизация предпочтения "показывать NSFW" из настроек МОСТА в cookie
+    этого браузера — вызывается не пользователем напрямую, а клиентским
+    скриптом static/nsfw-sync.js на каждой странице, когда он видит, что
+    текущая cookie разошлась с тем, что сейчас отдаёт GET /bridge/
+    nsfw_preference. Тот же паттерн, что /set-lang (см. выше), только
+    источник истины для значения — мост, а не сам сайт (сайт в принципе не
+    знает "кто" сейчас смотрит, поэтому не может решить это сам).
+    """
+    response = RedirectResponse(url=next or "/")
+    response.set_cookie(
+        NSFW_COOKIE_NAME, "1" if show == "1" else "0",
+        max_age=60 * 60 * 24 * 365, samesite="lax",
+    )
+    return response
+
+
 @app.get("/", response_class=HTMLResponse)
 async def home_page(request: Request, q: str = "", session: AsyncSession = Depends(get_session)):
     results = []
     recent_videos = []
     random_videos = []
 
+    # NSFW-фильтр по предпочтению ЭТОГО посетителя (см. NSFW_COOKIE_NAME/
+    # _show_nsfw выше) — применяется и к инлайн-поиску на главной, и к
+    # recents/random, тем же способом (AND (:show_nsfw OR v.nsfw = false)),
+    # что и в /api/search.
+    show_nsfw = _show_nsfw(request)
+
     if q.strip():
         # Тот же дорогой ts_vector-запрос, что и /api/search — тот же бюджет.
         enforce("search")
         sql = text("""
             SELECT DISTINCT v.video_id, v.title, c.display_name AS channel_display_name,
-                   v.duration_seconds, v.thumbnail IS NOT NULL AS has_thumbnail,
+                   v.duration_seconds, v.thumbnail IS NOT NULL AS has_thumbnail, v.nsfw,
                    ts_rank(
                        to_tsvector('simple', v.title || ' ' || v.description || ' ' || c.display_name),
                        plainto_tsquery('simple', :query)
@@ -938,9 +1014,10 @@ async def home_page(request: Request, q: str = "", session: AsyncSession = Depen
               AND v.removed = false
               AND v.access_level = 'public'
               AND c.banned = false
+              AND (:show_nsfw OR v.nsfw = false)
             ORDER BY rank DESC LIMIT 40
         """)
-        result = await session.execute(sql, {"query": q})
+        result = await session.execute(sql, {"query": q, "show_nsfw": show_nsfw})
         results = result.fetchall()
     else:
         # Без поискового запроса — лента главной: "recent" (8 последних
@@ -951,14 +1028,15 @@ async def home_page(request: Request, q: str = "", session: AsyncSession = Depen
 
         recent_sql = text("""
             SELECT v.video_id, v.title, c.display_name AS channel_display_name, v.duration_seconds,
-                   v.thumbnail IS NOT NULL AS has_thumbnail
+                   v.thumbnail IS NOT NULL AS has_thumbnail, v.nsfw
             FROM videos v
             JOIN channels c ON v.channel_id = c.channel_id
             WHERE v.removed = false AND v.access_level = 'public' AND c.banned = false
+              AND (:show_nsfw OR v.nsfw = false)
             ORDER BY v.published_at DESC
             LIMIT 8
         """)
-        recent_result = await session.execute(recent_sql)
+        recent_result = await session.execute(recent_sql, {"show_nsfw": show_nsfw})
         recent_videos = recent_result.fetchall()
         recent_ids = {v.video_id for v in recent_videos}
 
@@ -968,14 +1046,15 @@ async def home_page(request: Request, q: str = "", session: AsyncSession = Depen
         # длину recent_ids, чтобы после фильтрации осталось 16.
         random_sql = text("""
             SELECT v.video_id, v.title, c.display_name AS channel_display_name, v.duration_seconds,
-                   v.thumbnail IS NOT NULL AS has_thumbnail
+                   v.thumbnail IS NOT NULL AS has_thumbnail, v.nsfw
             FROM videos v
             JOIN channels c ON v.channel_id = c.channel_id
             WHERE v.removed = false AND v.access_level = 'public' AND c.banned = false
+              AND (:show_nsfw OR v.nsfw = false)
             ORDER BY random()
             LIMIT :limit
         """)
-        random_result = await session.execute(random_sql, {"limit": 16 + len(recent_ids)})
+        random_result = await session.execute(random_sql, {"limit": 16 + len(recent_ids), "show_nsfw": show_nsfw})
         random_videos = [v for v in random_result.fetchall() if v.video_id not in recent_ids][:16]
 
     return templates.TemplateResponse(
@@ -1001,20 +1080,30 @@ async def channel_page(
     if channel is None or channel.banned:
         raise HTTPException(status_code=404, detail="Channel not found")
 
+    # NSFW-фильтр по предпочтению ЭТОГО посетителя — см. NSFW_COOKIE_NAME/
+    # _show_nsfw. Тот же список видео, что раньше, просто с одним
+    # дополнительным условием, когда показ выключен (см. get_channel_videos
+    # выше — тот же паттерн "условие в списке, только если нужно").
+    filters = [
+        Video.channel_id == channel_id, Video.removed == False,  # noqa: E712
+        Video.access_level == "public",
+    ]
+    show_nsfw = _show_nsfw(request)
+    if not show_nsfw:
+        filters.append(Video.nsfw == False)  # noqa: E712
+
     result = await session.execute(
-        select(Video)
-        .where(
-            Video.channel_id == channel_id, Video.removed == False,  # noqa: E712
-            Video.access_level == "public",
-        )
-        .order_by(Video.published_at.desc())
+        select(Video).where(*filters).order_by(Video.published_at.desc())
     )
     videos = result.scalars().all()
 
     pinned_video = None
     if channel.pinned_video_id:
         pinned_video = await session.get(Video, channel.pinned_video_id)
-        if pinned_video is not None and (pinned_video.removed or pinned_video.access_level == "private"):
+        if pinned_video is not None and (
+            pinned_video.removed or pinned_video.access_level == "private"
+            or (pinned_video.nsfw and not show_nsfw)
+        ):
             pinned_video = None
 
     return templates.TemplateResponse(
@@ -1056,6 +1145,7 @@ async def video_page(
                 "dislike_count": video.dislike_count,
                 "comment_count": video.comment_count,
                 "has_thumbnail": video.thumbnail is not None,
+                "nsfw": video.nsfw,
             },
             "channel_display_name": (channel.site_display_name or channel.display_name) if channel else "Unknown",
             **_i18n_ctx(request),

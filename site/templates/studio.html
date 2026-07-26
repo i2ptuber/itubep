@@ -136,7 +136,9 @@ document.addEventListener("DOMContentLoaded", function () {
                     '<span class="studio-video-duration">' + formatDuration(v.duration_seconds) + '</span>' +
                 '</a>' +
                 '<div class="studio-video-main">' +
-                    '<a class="studio-video-title" href="' + editUrl + '">' + v.title + '</a>' +
+                    '<a class="studio-video-title" href="' + editUrl + '">' + v.title +
+                        (v.nsfw ? '<span class="studio-nsfw-inline-badge">⚠ NSFW</span>' : '') +
+                    '</a>' +
                     '<div class="studio-video-actions">' +
                         '<a class="studio-icon-btn" href="' + editUrl + '" title="' + window.t("studio.action_edit") + '">✏</a>' +
                         '<a class="studio-icon-btn" href="/video/' + v.video_id + '#comments-heading" title="' + window.t("studio.action_comments") + '">💬</a>' +

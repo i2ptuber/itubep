@@ -21,6 +21,8 @@ MODE_CONFIRM = "confirm"
 
 
 def main():
+    from ui.gui_thread import ensure_display
+    ensure_display()
     storage = PolicyStorage()
 
     root = tk.Tk()
@@ -83,6 +85,28 @@ def main():
               font=("Sans", 9, "italic")).pack(anchor="w", pady=(10, 0))
     ttk.Label(frame, text=t("settings.apply_note_2"),
               font=("Sans", 9, "italic")).pack(anchor="w")
+
+    ttk.Separator(frame).pack(fill="x", pady=15)
+
+    # --- Показ NSFW-контента ---
+    # Не влияет на публикацию (отметка при публикации на сайте всегда
+    # обязательна, см. site/templates/publish.html) — только на то, будет
+    # ли этот конкретный человек ВИДЕТЬ отмеченный контент в поиске/на
+    # главной/на страницах каналов сайтов, к которым подключён этот мост
+    # (см. bridge/transport/http_server.py:nsfw_preference и
+    # site/app/main.py:_show_nsfw). Собственные NSFW-видео автор всегда
+    # видит в своей студии независимо от этого переключателя.
+    ttk.Label(frame, text=t("settings.nsfw_heading"), font=("Sans", 11, "bold")).pack(anchor="w")
+
+    show_nsfw_var = tk.BooleanVar(value=storage.get_show_nsfw())
+
+    def on_nsfw_change():
+        storage.set_show_nsfw(show_nsfw_var.get())
+
+    ttk.Checkbutton(
+        frame, text=t("settings.nsfw_checkbox"),
+        variable=show_nsfw_var, command=on_nsfw_change,
+    ).pack(anchor="w", pady=(5, 0))
 
     ttk.Separator(frame).pack(fill="x", pady=15)
 
