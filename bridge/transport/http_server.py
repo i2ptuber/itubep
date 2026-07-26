@@ -282,6 +282,37 @@ def create_app(policy: BridgePolicy) -> web.Application:
             return web.json_response({"error": str(e)}, status=400)
         return web.json_response(result)
 
+    async def studio_thumbnail(request: web.Request):
+        token = _extract_token(request)
+        body = await request.json()
+        video_id = body.get("video_id", "")
+        if not video_id:
+            return web.json_response({"error": "missing video_id"}, status=400)
+        try:
+            result = policy.update_thumbnail(token, video_id)
+        except PermissionDenied:
+            raise
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+        return web.json_response(result)
+
+    async def studio_video_update(request: web.Request):
+        token = _extract_token(request)
+        body = await request.json()
+        video_id = body.get("video_id", "")
+        title = body.get("title", "")
+        description = body.get("description", "")
+        access_level = body.get("access_level", "public")
+        if not video_id:
+            return web.json_response({"error": "missing video_id"}, status=400)
+        try:
+            result = policy.update_video_details(token, video_id, title, description, access_level)
+        except PermissionDenied:
+            raise
+        except Exception as e:
+            return web.json_response({"error": str(e)}, status=400)
+        return web.json_response(result)
+
     async def react(request: web.Request):
         token = _extract_token(request)
         body = await request.json()
@@ -330,6 +361,8 @@ def create_app(policy: BridgePolicy) -> web.Application:
     app.router.add_post("/bridge/open_settings", open_settings)
     app.router.add_post("/bridge/studio/update", studio_update)
     app.router.add_post("/bridge/studio/state", studio_state)
+    app.router.add_post("/bridge/studio/thumbnail", studio_thumbnail)
+    app.router.add_post("/bridge/studio/video_update", studio_video_update)
     app.router.add_post("/bridge/react", react)
     app.router.add_post("/bridge/comment", comment)
 

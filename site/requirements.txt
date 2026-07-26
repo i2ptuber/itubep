@@ -6,3 +6,4 @@ pydantic
 pynacl
 jinja2
 python-multipart
+Pillow>=10.0

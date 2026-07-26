@@ -67,6 +67,12 @@ class VideoManifest(BaseModel):
     duration: int = 0
     qualities: list[QualityManifest]
     published_at: str
+    # sha256(байты превью) — присутствует только если мост прислал превью;
+    # часть подписанных данных (см. bridge/policy/crypto_utils.py — родовая
+    # сериализация, отдельного изменения формата подписи не потребовалось).
+    # Сайт сверяет с ним sha256 РЕАЛЬНО присланного файла превью ДО того,
+    # как сохранить его — см. main.py:publish_video.
+    thumbnail_sha256: str | None = Field(None, min_length=64, max_length=64)
     signature: str
     
 class SearchResultItem(BaseModel):
@@ -88,10 +94,27 @@ class SearchResponse(BaseModel):
 class VideoListItem(BaseModel):
     video_id: str
     title: str
+    description: str = ""
     duration_seconds: int
     download_count: int
+    comment_count: int = 0
     published_at: str
     access_level: str = "public"
+    has_thumbnail: bool = False
+    # Модерация держателем сайта (см. scripts/moderate.py) — раньше
+    # /api/channel/{id}/studio-state полностью исключал такие видео из
+    # выдачи, и владелец канала никак не узнавал, что его видео убрано и
+    # почему. Теперь studio-state отдаёт их тоже (см. main.py), а студия
+    # показывает предупреждение с причиной — тот же принцип прозрачности,
+    # что и у access_level, просто для действия держателя сайта, а не
+    # самого владельца канала.
+    removed: bool = False
+    removed_reason: str = ""
+    # Метки качества (например ["360p"]) — из manifest_json, а не из
+    # публичного /api/video/{id}/manifest: тот эндпоинт отдаёт 404 для
+    # private видео (см. main.py:get_manifest), а владельцу в студии нужно
+    # видеть качества СВОИХ видео независимо от access_level.
+    qualities: list[str] = Field(default_factory=list)
 
     class Config:
         from_attributes = True
@@ -116,6 +139,56 @@ class StudioAuthRequest(BaseModel):
     timestamp: str
     audience_origin: str = Field(..., min_length=1)  # см. StudioUpdateRequest
     signature: str = Field(..., min_length=1)
+
+
+class StudioThumbnailAuthRequest(BaseModel):
+    """
+    Подписанный владельцем канала запрос на замену превью УЖЕ
+    опубликованного видео — та же схема подписи, что StudioAuthRequest/
+    StudioUpdateRequest. thumbnail_sha256 (в отличие от исходной публикации,
+    см. VideoManifest) НЕ становится частью video_id/manifest_json —
+    исходный подписанный манифест видео неизменен, превью здесь такое же
+    мутируемое site-side поле, как access_level в StudioUpdateRequest,
+    просто с отдельным эндпоинтом из-за бинарных данных файла (см.
+    main.py:update_studio_thumbnail — Form+File, тот же паттерн, что
+    /api/video/publish).
+    """
+    channel_id: str = Field(..., min_length=1, max_length=64)
+    video_id: str = Field(..., min_length=64, max_length=64)
+    thumbnail_sha256: str = Field(..., min_length=64, max_length=64)
+    updated_at: str
+    audience_origin: str = Field(..., min_length=1)
+    signature: str = Field(..., min_length=1)
+
+
+class StudioVideoUpdateRequest(BaseModel):
+    """
+    Подписанное владельцем канала обновление ОДНОГО видео (страница
+    /studio/video/{id} — "Сведения о видео") — title/description/
+    access_level. В отличие от StudioUpdateRequest (которая тоже умеет
+    менять access_level, но пачкой для всех видео разом и БЕЗ title/
+    description) — это отдельный эндпоинт под отдельную кнопку "Сохранить"
+    на странице редактирования одного видео, со своим собственным
+    подтверждением на мосте. Как и у превью (см. StudioThumbnailAuthRequest)
+    title/description здесь — site-side мутируемые колонки Video, НЕ часть
+    исходного подписанного manifest_json (тот остаётся историческим,
+    неизменным свидетельством того, что было подписано при публикации).
+    """
+    channel_id: str = Field(..., min_length=1, max_length=64)
+    video_id: str = Field(..., min_length=64, max_length=64)
+    title: str = Field(..., min_length=1, max_length=300)
+    description: str = Field("", max_length=5000)
+    access_level: str = "public"
+    updated_at: str
+    audience_origin: str = Field(..., min_length=1)
+    signature: str = Field(..., min_length=1)
+
+    @field_validator("access_level")
+    @classmethod
+    def access_level_valid(cls, v: str) -> str:
+        if v not in ("public", "unlisted", "private"):
+            raise ValueError("Invalid access_level")
+        return v
 
 
 class StudioStateResponse(BaseModel):

@@ -251,12 +251,17 @@ class BridgePolicy:
         if not video_path:
             raise PermissionDenied("Файл не выбран")
 
+        # Необязательно — Cancel здесь ЛЕГИТИМЕН (в отличие от отмены выбора
+        # видеофайла выше), просто публикуем без превью.
+        thumbnail_path = publish_dialogs.choose_thumbnail_file()
+
         self._cleanup_expired_publish_sessions()
 
         session_id = secrets.token_urlsafe(24)
         self._publish_sessions[session_id] = {
             "origin": origin,
             "video_path": video_path,
+            "thumbnail_path": thumbnail_path,
             "expires_at": time.monotonic() + self._publish_session_ttl,
         }
 
@@ -265,6 +270,7 @@ class BridgePolicy:
             # Имя файла — просто чтобы сайт мог показать пользователю "выбран
             # файл: <имя>" для обратной связи. Полный путь на сайт не уходит.
             "filename": Path(video_path).name,
+            "thumbnail_filename": Path(thumbnail_path).name if thumbnail_path else None,
         }
 
     def finish_publish(
@@ -309,13 +315,18 @@ class BridgePolicy:
             # моста между шагами — явная ошибка вместо AttributeError ниже.
             raise PermissionDenied("Канал не инициализирован — начните публикацию заново")
 
-        publisher = VideoPublisher(self.snark, channel, http_proxy=self.storage.get_i2p_http_proxy())
+        publisher = VideoPublisher(
+            self.snark, channel,
+            http_proxy=self.storage.get_i2p_http_proxy(),
+            max_thumbnail_bytes=self.storage.get_max_thumbnail_bytes(),
+        )
         try:
             result = publisher.publish(
                 video_path=Path(session["video_path"]),
                 title=title,
                 description=description or "",
                 site_base_url=origin,  # публикуем на тот же сайт, что и запросил
+                thumbnail_path=Path(session["thumbnail_path"]) if session.get("thumbnail_path") else None,
             )
         except PublishError as e:
             raise PermissionDenied(f"Ошибка публикации: {e}")
@@ -484,6 +495,119 @@ class BridgePolicy:
             raise PermissionDenied(f"Не удалось соединиться с сайтом для чтения студии: {e}")
         if resp.status_code != 200:
             raise PermissionDenied(f"Сайт отклонил чтение студии: {resp.status_code} {resp.text}")
+
+        return resp.json()
+
+    def update_thumbnail(self, token: str, video_id: str) -> dict:
+        """
+        Смена превью УЖЕ опубликованного видео из студии — открывает выбор
+        файла на мосте (тот же choose_thumbnail_file, что при публикации),
+        сжимает под лимит сайта (тот же compress_thumbnail/лестница, что
+        и при публикации, см. snark/thumbnail.py) и отправляет подписанный
+        запрос на /api/channel/{id}/studio/thumbnail. В отличие от
+        choose_thumbnail_file в start_publish, здесь отмена выбора файла —
+        это ошибка (пользователь явно нажал "сменить превью"), а не штатный
+        "публикуем без превью".
+        """
+        import time
+        import hashlib
+        import json
+        import requests
+        from snark.publisher import _requests_session_for, I2P_REQUEST_TIMEOUT_SECONDS
+        from snark.thumbnail import compress_thumbnail, ThumbnailError
+
+        origin = self._authenticate(token)
+        self._confirm_if_needed(origin, "сменить превью видео")
+
+        channel = self._channel_identity
+        if channel is None:
+            channel = get_or_create_channel(self.storage, PublishDialogs())
+            self._channel_identity = channel
+
+        image_path = PublishDialogs().choose_thumbnail_file()
+        if not image_path:
+            raise PermissionDenied("Файл не выбран")
+
+        try:
+            thumbnail_bytes = compress_thumbnail(Path(image_path), self.storage.get_max_thumbnail_bytes())
+        except ThumbnailError as e:
+            raise PermissionDenied(str(e))
+        if thumbnail_bytes is None:
+            raise PermissionDenied(
+                "Не удалось сжать превью до предела, который принимает сайт — попробуйте другое изображение"
+            )
+
+        record = {
+            "channel_id": channel.channel_id,
+            "video_id": video_id,
+            "thumbnail_sha256": hashlib.sha256(thumbnail_bytes).hexdigest(),
+            "updated_at": str(time.time()),
+            "audience_origin": origin,
+        }
+        record["signature"] = channel.sign(record)
+
+        try:
+            resp = _requests_session_for(origin, self.storage.get_i2p_http_proxy()).post(
+                f"{origin.rstrip('/')}/api/channel/{channel.channel_id}/studio/thumbnail",
+                data={"auth_json": json.dumps(record)},
+                files={"thumbnail": ("thumbnail.webp", thumbnail_bytes, "image/webp")},
+                timeout=I2P_REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as e:
+            raise PermissionDenied(f"Не удалось соединиться с сайтом для смены превью: {e}")
+        if resp.status_code != 200:
+            raise PermissionDenied(f"Сайт отклонил смену превью: {resp.status_code} {resp.text}")
+
+        return resp.json()
+
+    def update_video_details(
+        self, token: str, video_id: str, title: str, description: str, access_level: str,
+    ) -> dict:
+        """
+        Сохранение "Сведений о видео" (title/description/доступ) со
+        страницы /studio/video/{id} — тот же паттерн подписи, что
+        studio_update/update_thumbnail, отдельный эндпоинт под отдельную
+        кнопку "Сохранить" именно этой страницы (не смешивается с общим
+        батч-сохранением списка студии).
+        """
+        import time
+        import requests
+        from snark.publisher import _requests_session_for, I2P_REQUEST_TIMEOUT_SECONDS
+
+        title = (title or "").strip()
+        if not title:
+            raise PermissionDenied("Название не указано")
+        if access_level not in ("public", "unlisted", "private"):
+            raise PermissionDenied(f"Некорректный уровень доступа: {access_level}")
+
+        origin = self._authenticate(token)
+        self._confirm_if_needed(origin, f"изменить сведения о видео {video_id}")
+
+        channel = self._channel_identity
+        if channel is None:
+            channel = get_or_create_channel(self.storage, PublishDialogs())
+            self._channel_identity = channel
+
+        record = {
+            "channel_id": channel.channel_id,
+            "video_id": video_id,
+            "title": title,
+            "description": description or "",
+            "access_level": access_level,
+            "updated_at": str(time.time()),
+            "audience_origin": origin,
+        }
+        record["signature"] = channel.sign(record)
+
+        try:
+            resp = _requests_session_for(origin, self.storage.get_i2p_http_proxy()).post(
+                f"{origin.rstrip('/')}/api/channel/{channel.channel_id}/studio/video",
+                json=record, timeout=I2P_REQUEST_TIMEOUT_SECONDS,
+            )
+        except requests.RequestException as e:
+            raise PermissionDenied(f"Не удалось соединиться с сайтом для сохранения сведений о видео: {e}")
+        if resp.status_code != 200:
+            raise PermissionDenied(f"Сайт отклонил сохранение: {resp.status_code} {resp.text}")
 
         return resp.json()
 

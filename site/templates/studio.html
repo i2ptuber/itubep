@@ -1,38 +1,60 @@
 {% extends "base.html" %}
 {% block title %}{{ t('studio.title') }} — ITubeP{% endblock %}
+{% block body_class %}studio-page{% endblock %}
 {% block content %}
-    <h1>{{ t('studio.title') }}</h1>
-    <p id="studio-loading">{{ t('studio.loading') }}</p>
+    <p id="studio-loading" style="padding: 24px 32px;">{{ t('studio.loading') }}</p>
 
-    <form id="studio-form" style="display:none;">
-        <div class="studio-section">
-            <div class="form-row">
-                <label for="studio-display-name">{{ t('studio.display_name_label') }}</label>
-                <input type="text" id="studio-display-name" maxlength="200">
-                <p class="form-hint">{{ t('studio.display_name_hint') }}</p>
-            </div>
-            <div class="form-row">
-                <label for="studio-description">{{ t('studio.description_label') }}</label>
-                <textarea id="studio-description" maxlength="5000"></textarea>
-            </div>
-            <div class="form-row">
-                <label for="studio-pinned">{{ t('studio.pinned_label') }}</label>
-                <select id="studio-pinned">
-                    <option value="">{{ t('studio.pinned_none') }}</option>
-                </select>
-            </div>
+    <div id="studio-layout" class="studio-layout" style="display:none;">
+        <nav class="studio-sidebar">
+            <button type="button" class="studio-nav-item active" data-tab="content">{{ t('studio.tab_content') }}</button>
+            <button type="button" class="studio-nav-item" data-tab="channel">{{ t('studio.tab_channel') }}</button>
+        </nav>
+
+        <div class="studio-main">
+            <h1>{{ t('studio.title') }}</h1>
+
+            <form id="studio-form">
+                <div id="studio-tab-content" class="studio-tab-panel">
+                    <div class="studio-table">
+                        <div class="studio-table-header">
+                            <div>{{ t('studio.col_video') }}</div>
+                            <div>{{ t('studio.col_notifications') }}</div>
+                            <div>{{ t('studio.col_access') }}</div>
+                            <div>{{ t('studio.col_date') }}</div>
+                            <div>{{ t('studio.col_downloads') }}</div>
+                            <div>{{ t('studio.col_comments') }}</div>
+                        </div>
+                        <div id="studio-videos" class="studio-table-body"></div>
+                    </div>
+                </div>
+
+                <div id="studio-tab-channel" class="studio-tab-panel" style="display:none;">
+                    <div class="studio-section">
+                        <div class="form-row">
+                            <label for="studio-display-name">{{ t('studio.display_name_label') }}</label>
+                            <input type="text" id="studio-display-name" maxlength="200">
+                            <p class="form-hint">{{ t('studio.display_name_hint') }}</p>
+                        </div>
+                        <div class="form-row">
+                            <label for="studio-description">{{ t('studio.description_label') }}</label>
+                            <textarea id="studio-description" maxlength="5000"></textarea>
+                        </div>
+                        <div class="form-row">
+                            <label for="studio-pinned">{{ t('studio.pinned_label') }}</label>
+                            <select id="studio-pinned">
+                                <option value="">{{ t('studio.pinned_none') }}</option>
+                            </select>
+                        </div>
+                    </div>
+                </div>
+
+                <button type="submit" class="btn-primary" style="margin-top: 20px;">{{ t('studio.save_button') }}</button>
+                <div id="studio-status"></div>
+            </form>
         </div>
+    </div>
 
-        <div class="studio-section">
-            <h2>{{ t('studio.videos_heading') }}</h2>
-            <div id="studio-videos"></div>
-        </div>
-
-        <button type="submit" class="btn-primary">{{ t('studio.save_button') }}</button>
-        <div id="studio-status"></div>
-    </form>
-
-    <p id="studio-no-channel" style="display:none;">
+    <p id="studio-no-channel" style="display:none; padding: 24px 32px;">
         <strong>{{ t('nochannel.title') }}</strong><br>
         {{ t('nochannel.text') }}
     </p>
@@ -42,7 +64,7 @@ document.addEventListener("DOMContentLoaded", function () {
     "use strict";
 
     var loadingEl = document.getElementById("studio-loading");
-    var formEl = document.getElementById("studio-form");
+    var layoutEl = document.getElementById("studio-layout");
     var noChannelEl = document.getElementById("studio-no-channel");
     var statusEl = document.getElementById("studio-status");
     var displayNameEl = document.getElementById("studio-display-name");
@@ -56,12 +78,78 @@ document.addEventListener("DOMContentLoaded", function () {
         private: window.t("studio.access_private"),
     };
 
+    // --- Переключение вкладок сайдбара: "Управление контентом" (по
+    // умолчанию) / "Управление каналом". Обе вкладки живут внутри ОДНОЙ
+    // формы (studio-form) — кнопка "Сохранить" в самом низу сохраняет
+    // изменения из обеих сразу, независимо от того, какая вкладка сейчас
+    // видна (доступ к видео мог быть изменён на "контенте", а имя/описание
+    // канала — на "канале", не обязательно оба в одном заходе).
+    document.querySelectorAll(".studio-nav-item").forEach(function (btn) {
+        btn.addEventListener("click", function () {
+            document.querySelectorAll(".studio-nav-item").forEach(function (b) { b.classList.remove("active"); });
+            btn.classList.add("active");
+            document.querySelectorAll(".studio-tab-panel").forEach(function (p) { p.style.display = "none"; });
+            document.getElementById("studio-tab-" + btn.dataset.tab).style.display = "";
+        });
+    });
+
     function accessSelectHtml(videoId, currentLevel) {
         var opts = ["public", "unlisted", "private"].map(function (level) {
             var selected = level === currentLevel ? " selected" : "";
             return '<option value="' + level + '"' + selected + '>' + ACCESS_LABELS[level] + "</option>";
         }).join("");
-        return '<select data-video-id="' + videoId + '">' + opts + "</select>";
+        return '<select class="studio-access-select" data-video-id="' + videoId + '">' + opts + "</select>";
+    }
+
+    function formatDate(iso) {
+        var d = new Date(iso);
+        if (isNaN(d.getTime())) return iso;
+        return d.toLocaleDateString();
+    }
+
+    function formatDuration(totalSeconds) {
+        var s = Math.max(0, Math.round(totalSeconds || 0));
+        var m = Math.floor(s / 60);
+        var rem = s % 60;
+        return m + ":" + (rem < 10 ? "0" : "") + rem;
+    }
+
+    function videoRowHtml(v) {
+        var editUrl = "/studio/video/" + v.video_id;
+        var thumbHtml = v.has_thumbnail
+            ? '<img class="studio-video-thumb" src="/api/video/' + v.video_id + '/thumbnail" alt="" loading="lazy">'
+            : '<div class="studio-video-thumb studio-video-thumb-placeholder"></div>';
+
+        var noticeHtml = v.removed
+            ? '<div class="studio-video-notice" title="' +
+              (v.removed_reason || "").replace(/"/g, "&quot;") + '">⚠ ' +
+              window.t("studio.notice_removed") + "</div>"
+            : '<span class="studio-video-notice-empty">—</span>';
+
+        // Каждая "ячейка" ниже — прямой grid-item родительского .studio-table
+        // (сам .studio-video-row — display:contents, см. style.css), поэтому
+        // ряд не может "разъехаться": ширины колонок задаёт ОДИН
+        // grid-template-columns, общий с шапкой таблицы.
+        return '<div class="studio-video-row" data-video-id="' + v.video_id + '">' +
+            '<div class="studio-video-cell-video">' +
+                '<a class="studio-video-thumb-wrap" href="' + editUrl + '">' + thumbHtml +
+                    '<span class="studio-video-duration">' + formatDuration(v.duration_seconds) + '</span>' +
+                '</a>' +
+                '<div class="studio-video-main">' +
+                    '<a class="studio-video-title" href="' + editUrl + '">' + v.title + '</a>' +
+                    '<div class="studio-video-actions">' +
+                        '<a class="studio-icon-btn" href="' + editUrl + '" title="' + window.t("studio.action_edit") + '">✏</a>' +
+                        '<a class="studio-icon-btn" href="/video/' + v.video_id + '#comments-heading" title="' + window.t("studio.action_comments") + '">💬</a>' +
+                        '<a class="studio-icon-btn" href="/video/' + v.video_id + '" title="' + window.t("studio.action_open") + '">▶</a>' +
+                    '</div>' +
+                '</div>' +
+            '</div>' +
+            '<div>' + noticeHtml + '</div>' +
+            '<div>' + accessSelectHtml(v.video_id, v.access_level || "public") + '</div>' +
+            '<div class="studio-video-date">' + formatDate(v.published_at) + '</div>' +
+            '<div class="studio-video-stat">' + v.download_count + '</div>' +
+            '<div class="studio-video-stat">' + v.comment_count + '</div>' +
+        '</div>';
     }
 
     function renderState(state) {
@@ -69,7 +157,7 @@ document.addEventListener("DOMContentLoaded", function () {
         descriptionEl.value = state.site_description || "";
 
         pinnedEl.innerHTML = '<option value="">' + window.t("studio.pinned_none") + "</option>";
-        (state.videos || []).forEach(function (v) {
+        (state.videos || []).filter(function (v) { return !v.removed; }).forEach(function (v) {
             var opt = document.createElement("option");
             opt.value = v.video_id;
             opt.textContent = v.title;
@@ -78,33 +166,31 @@ document.addEventListener("DOMContentLoaded", function () {
         });
 
         if (!state.videos || state.videos.length === 0) {
-            videosEl.innerHTML = '<p class="empty-state" style="margin-top:0;text-align:left;">' +
+            videosEl.innerHTML = '<p class="empty-state" style="grid-column: 1 / -1; margin-top:16px; text-align:left;">' +
                 window.t("studio.no_videos") + "</p>";
         } else {
-            videosEl.innerHTML = state.videos.map(function (v) {
-                return '<div class="studio-video-row">' +
-                    '<span class="studio-video-title">' + v.title + "</span>" +
-                    accessSelectHtml(v.video_id, v.access_level || "public") +
-                    "</div>";
-            }).join("");
+            videosEl.innerHTML = state.videos.map(videoRowHtml).join("");
         }
 
         loadingEl.style.display = "none";
-        formEl.style.display = "";
+        layoutEl.style.display = "";
+    }
+
+    async function loadState() {
+        var token = await menuGetOrCreateToken();
+        var resp = await menuBridgeFetchAuthed(
+            MENU_BRIDGE_URL + "/bridge/studio/state", { method: "POST" }, token,
+        );
+        if (!resp.ok) {
+            var errData = await resp.json().catch(function () { return {}; });
+            throw new Error(errData.error || ("bridge error (" + resp.status + ")"));
+        }
+        return await resp.json();
     }
 
     (async function () {
         try {
-            var token = await menuGetOrCreateToken();
-            var resp = await menuBridgeFetchAuthed(
-                MENU_BRIDGE_URL + "/bridge/studio/state", { method: "POST" }, token,
-            );
-            if (!resp.ok) {
-                var errData = await resp.json().catch(function () { return {}; });
-                throw new Error(errData.error || ("bridge error (" + resp.status + ")"));
-            }
-            var state = await resp.json();
-            renderState(state);
+            renderState(await loadState());
         } catch (err) {
             console.error("studio:", err);
             loadingEl.style.display = "none";
@@ -120,7 +206,7 @@ document.addEventListener("DOMContentLoaded", function () {
         }
     })();
 
-    formEl.addEventListener("submit", function (e) {
+    document.getElementById("studio-form").addEventListener("submit", function (e) {
         e.preventDefault();
         statusEl.textContent = window.t("studio.status_saving");
 

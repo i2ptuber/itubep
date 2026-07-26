@@ -1,0 +1,293 @@
+{% extends "base.html" %}
+{% block title %}{{ t('studio.edit_title') }} — ITubeP{% endblock %}
+{% block body_class %}studio-page{% endblock %}
+{% block content %}
+    <p id="edit-loading">{{ t('studio.loading') }}</p>
+    <p id="edit-error" style="display:none; color:#999;"></p>
+
+    <div id="edit-layout" class="studio-edit-layout" style="display:none;">
+        <aside class="studio-edit-sidebar">
+            <a class="studio-edit-back" href="/studio">{{ t('studio.edit_back') }}</a>
+
+            <div class="studio-edit-side-thumb-wrap">
+                <img id="edit-side-thumb" class="studio-edit-side-thumb" alt="" style="display:none;">
+                <div id="edit-side-thumb-placeholder" class="studio-edit-side-thumb studio-video-thumb-placeholder"></div>
+                <span id="edit-side-duration" class="studio-video-duration"></span>
+            </div>
+            <div class="studio-edit-side-label">{{ t('studio.your_video_label') }}</div>
+            <div id="edit-side-title" class="studio-edit-side-title"></div>
+
+            <nav class="studio-edit-nav">
+                <span class="studio-edit-nav-item active">✏ {{ t('studio.nav_details') }}</span>
+                <a id="edit-comments-link" class="studio-edit-nav-item" href="#">💬 {{ t('studio.action_comments') }}</a>
+            </nav>
+        </aside>
+
+        <div class="studio-edit-content">
+        <div class="studio-edit-header">
+            <h1>{{ t('studio.edit_title') }}</h1>
+            <div class="studio-edit-header-actions">
+                <button type="button" id="edit-discard-btn" class="btn-secondary">{{ t('studio.discard_changes') }}</button>
+                <button type="submit" form="edit-form" class="btn-primary">{{ t('studio.save_short') }}</button>
+            </div>
+        </div>
+
+        <form id="edit-form" class="studio-edit-main">
+            <div class="form-row">
+                <label for="edit-title">{{ t('studio.title_field_label') }}</label>
+                <input type="text" id="edit-title" maxlength="300" required>
+            </div>
+            <div class="form-row">
+                <label for="edit-description">{{ t('studio.description_field_label') }}</label>
+                <textarea id="edit-description" maxlength="5000" rows="8"></textarea>
+            </div>
+
+            <div class="studio-edit-thumb-section">
+                <h2>{{ t('studio.thumbnail_section_heading') }}</h2>
+                <p class="form-hint">{{ t('studio.thumbnail_section_hint') }}</p>
+                <div class="studio-edit-thumb-boxes">
+                    <button type="button" id="edit-thumb-upload-box" class="studio-edit-thumb-box">
+                        <span class="studio-edit-thumb-box-icon">⬆</span>
+                        <span>{{ t('studio.thumbnail_upload_box') }}</span>
+                    </button>
+                    <div class="studio-edit-thumb-box studio-edit-thumb-box-disabled" title="{{ t('studio.unavailable_tooltip') }}">
+                        <span class="studio-edit-thumb-box-icon">🎞</span>
+                        <span>{{ t('studio.thumbnail_from_video_box') }}</span>
+                    </div>
+                </div>
+            </div>
+        </form>
+
+        <aside class="studio-edit-side">
+            <div class="studio-edit-preview">
+                <img id="edit-preview-thumb" alt="" style="display:none;">
+                <div id="edit-preview-placeholder" class="studio-video-thumb-placeholder"></div>
+            </div>
+
+            <div class="studio-edit-side-block">
+                <div class="studio-edit-side-block-label">{{ t('studio.video_link_label') }}</div>
+                <div class="studio-edit-link-row">
+                    <a id="edit-video-link" href="#" target="_blank" rel="noopener"></a>
+                    <button type="button" id="edit-copy-link-btn" class="btn-secondary">{{ t('studio.copy_button') }}</button>
+                </div>
+            </div>
+
+            <div class="studio-edit-side-block">
+                <div class="studio-edit-side-block-label">{{ t('studio.quality_label') }}</div>
+                <div id="edit-qualities" class="studio-edit-pills"></div>
+            </div>
+
+            <div class="studio-edit-side-block">
+                <div class="studio-edit-side-block-label">🔒 {{ t('studio.access_label') }}</div>
+                <select id="edit-access" class="studio-access-select"></select>
+            </div>
+        </aside>
+        </div>
+    </div>
+
+    <div id="edit-status"></div>
+
+<script>
+document.addEventListener("DOMContentLoaded", function () {
+    "use strict";
+
+    var VIDEO_ID = {{ video_id | tojson }};
+
+    var loadingEl = document.getElementById("edit-loading");
+    var errorEl = document.getElementById("edit-error");
+    var layoutEl = document.getElementById("edit-layout");
+    var statusEl = document.getElementById("edit-status");
+
+    var titleEl = document.getElementById("edit-title");
+    var descriptionEl = document.getElementById("edit-description");
+    var accessEl = document.getElementById("edit-access");
+
+    var sideThumbImg = document.getElementById("edit-side-thumb");
+    var sideThumbPlaceholder = document.getElementById("edit-side-thumb-placeholder");
+    var sideDurationEl = document.getElementById("edit-side-duration");
+    var sideTitleEl = document.getElementById("edit-side-title");
+    var commentsLinkEl = document.getElementById("edit-comments-link");
+
+    var previewImg = document.getElementById("edit-preview-thumb");
+    var previewPlaceholder = document.getElementById("edit-preview-placeholder");
+    var linkEl = document.getElementById("edit-video-link");
+    var copyBtn = document.getElementById("edit-copy-link-btn");
+    var qualitiesEl = document.getElementById("edit-qualities");
+
+    var ACCESS_LABELS = {
+        public: window.t("studio.access_public"),
+        unlisted: window.t("studio.access_unlisted"),
+        private: window.t("studio.access_private"),
+    };
+
+    var channelId = null;
+    var original = null; // снимок для "Отменить изменения"
+
+    function formatDuration(totalSeconds) {
+        var s = Math.max(0, Math.round(totalSeconds || 0));
+        var m = Math.floor(s / 60);
+        var rem = s % 60;
+        return m + ":" + (rem < 10 ? "0" : "") + rem;
+    }
+
+    function setThumb(imgEl, placeholderEl, hasThumbnail, cacheBust) {
+        if (hasThumbnail) {
+            imgEl.src = "/api/video/" + VIDEO_ID + "/thumbnail" + (cacheBust ? ("?t=" + Date.now()) : "");
+            imgEl.style.display = "";
+            placeholderEl.style.display = "none";
+        } else {
+            imgEl.style.display = "none";
+            placeholderEl.style.display = "";
+        }
+    }
+
+    function applyVideo(v) {
+        titleEl.value = v.title;
+        descriptionEl.value = v.description || "";
+        accessEl.value = v.access_level || "public";
+
+        original = { title: v.title, description: v.description || "", access_level: v.access_level || "public" };
+
+        sideTitleEl.textContent = v.title;
+        sideDurationEl.textContent = formatDuration(v.duration_seconds);
+        setThumb(sideThumbImg, sideThumbPlaceholder, v.has_thumbnail, false);
+        setThumb(previewImg, previewPlaceholder, v.has_thumbnail, false);
+
+        commentsLinkEl.href = "/video/" + VIDEO_ID + "#comments-heading";
+
+        var link = window.location.origin + "/video/" + VIDEO_ID;
+        linkEl.textContent = link;
+        linkEl.href = link;
+
+        qualitiesEl.innerHTML = (v.qualities && v.qualities.length ? v.qualities : ["—"])
+            .map(function (q) { return '<span class="studio-edit-pill">' + q + "</span>"; })
+            .join("");
+    }
+
+    async function loadState() {
+        var token = await menuGetOrCreateToken();
+        var resp = await menuBridgeFetchAuthed(
+            MENU_BRIDGE_URL + "/bridge/studio/state", { method: "POST" }, token,
+        );
+        if (!resp.ok) {
+            var errData = await resp.json().catch(function () { return {}; });
+            throw new Error(errData.error || ("bridge error (" + resp.status + ")"));
+        }
+        return await resp.json();
+    }
+
+    (async function () {
+        try {
+            var state = await loadState();
+            channelId = state.channel_id;
+            var video = (state.videos || []).find(function (v) { return v.video_id === VIDEO_ID; });
+            if (!video) {
+                throw new Error(window.t("studio.not_found"));
+            }
+            applyVideo(video);
+            loadingEl.style.display = "none";
+            layoutEl.style.display = "";
+        } catch (err) {
+            console.error("studio edit:", err);
+            loadingEl.style.display = "none";
+            errorEl.textContent = (err && err.message) ? err.message : String(err);
+            errorEl.style.display = "";
+        }
+    })();
+
+    ["public", "unlisted", "private"].forEach(function (level) {
+        var opt = document.createElement("option");
+        opt.value = level;
+        opt.textContent = ACCESS_LABELS[level];
+        accessEl.appendChild(opt);
+    });
+
+    document.getElementById("edit-discard-btn").addEventListener("click", function () {
+        if (!original) return;
+        titleEl.value = original.title;
+        descriptionEl.value = original.description;
+        accessEl.value = original.access_level;
+        statusEl.textContent = window.t("studio.status_discarded");
+    });
+
+    copyBtn.addEventListener("click", async function () {
+        try {
+            await navigator.clipboard.writeText(linkEl.href);
+            var prev = copyBtn.textContent;
+            copyBtn.textContent = window.t("studio.copied");
+            setTimeout(function () { copyBtn.textContent = prev; }, 1500);
+        } catch (err) {
+            console.error("clipboard:", err);
+        }
+    });
+
+    // "Загрузить файл" — та же немедленная бридж-операция (выбор + сжатие
+    // + отправка), что раньше висела на кнопке в списке студии, просто
+    // теперь на своей отдельной странице, рядом с остальными сведениями о
+    // видео, как у YouTube.
+    document.getElementById("edit-thumb-upload-box").addEventListener("click", async function () {
+        var box = this;
+        statusEl.textContent = window.t("studio.thumbnail_status_updating");
+        box.disabled = true;
+        try {
+            var token = await menuGetOrCreateToken();
+            var resp = await menuBridgeFetchAuthed(
+                MENU_BRIDGE_URL + "/bridge/studio/thumbnail",
+                {
+                    method: "POST",
+                    headers: { "Content-Type": "application/json" },
+                    body: JSON.stringify({ video_id: VIDEO_ID }),
+                },
+                token,
+            );
+            if (!resp.ok) {
+                var data = await resp.json().catch(function () { return {}; });
+                throw new Error(data.error || "bridge error");
+            }
+            setThumb(sideThumbImg, sideThumbPlaceholder, true, true);
+            setThumb(previewImg, previewPlaceholder, true, true);
+            statusEl.textContent = window.t("studio.thumbnail_status_updated");
+        } catch (err) {
+            statusEl.textContent = window.t("studio.thumbnail_status_error") + err.message;
+        } finally {
+            box.disabled = false;
+        }
+    });
+
+    document.getElementById("edit-form").addEventListener("submit", function (e) {
+        e.preventDefault();
+        statusEl.textContent = window.t("studio.status_saving");
+
+        var payload = {
+            video_id: VIDEO_ID,
+            title: titleEl.value.trim(),
+            description: descriptionEl.value.trim(),
+            access_level: accessEl.value,
+        };
+
+        (async function () {
+            try {
+                var token = await menuGetOrCreateToken();
+                var resp = await menuBridgeFetchAuthed(
+                    MENU_BRIDGE_URL + "/bridge/studio/video_update",
+                    {
+                        method: "POST",
+                        headers: { "Content-Type": "application/json" },
+                        body: JSON.stringify(payload),
+                    },
+                    token,
+                );
+                if (!resp.ok) {
+                    var data = await resp.json().catch(function () { return {}; });
+                    throw new Error(data.error || "bridge error");
+                }
+                original = { title: payload.title, description: payload.description, access_level: payload.access_level };
+                statusEl.textContent = window.t("studio.status_saved");
+            } catch (err) {
+                statusEl.textContent = window.t("studio.status_error") + err.message;
+            }
+        })();
+    });
+});
+</script>
+{% endblock %}

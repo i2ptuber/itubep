@@ -8,6 +8,9 @@
         <button id="choose-file-btn" class="btn-primary">{{ t('publish.choose_file_btn') }}</button>
         <div id="chosen-file-info" class="form-hint" style="display:none">
             <span>{{ t('publish.file_chosen') }}</span><strong id="chosen-file-name"></strong>
+            <div id="chosen-thumbnail-info" style="display:none">
+                <span>{{ t('publish.thumbnail_chosen') }}</span><strong id="chosen-thumbnail-name"></strong>
+            </div>
             <button id="change-file-btn" type="button" class="btn-secondary">{{ t('publish.change_file_btn') }}</button>
         </div>
     </div>
@@ -60,6 +63,8 @@
         const chooseFileBtn = document.getElementById("choose-file-btn");
         const chosenFileInfo = document.getElementById("chosen-file-info");
         const chosenFileName = document.getElementById("chosen-file-name");
+        const chosenThumbnailInfo = document.getElementById("chosen-thumbnail-info");
+        const chosenThumbnailName = document.getElementById("chosen-thumbnail-name");
         const changeFileBtn = document.getElementById("change-file-btn");
         const publishForm = document.getElementById("publish-form");
         const publishSubmitBtn = document.getElementById("publish-submit-btn");
@@ -92,6 +97,12 @@
                 const data = await resp.json();
                 publishSessionId = data.publish_session_id;
                 chosenFileName.textContent = data.filename;
+                if (data.thumbnail_filename) {
+                    chosenThumbnailName.textContent = data.thumbnail_filename;
+                    chosenThumbnailInfo.style.display = "";
+                } else {
+                    chosenThumbnailInfo.style.display = "none";
+                }
                 chosenFileInfo.style.display = "";
                 chooseFileBtn.style.display = "none";
                 publishForm.style.display = "";

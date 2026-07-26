@@ -94,12 +94,19 @@ DEFAULTS: dict[str, tuple[int | None, int]] = {
     "channel_register_id": (20, 3600),
     "video_publish_id": (60, 3600),
     "studio_update_id": (60, 3600),
+    "studio_thumbnail_id": (60, 3600),
+    "studio_video_update_id": (60, 3600),
     "studio_state_id": (120, 3600),
     "reaction_id": (120, 3600),
     "comment_id": (30, 3600),
     "comment_read": (1000, 60),
     "video_publish_global": (None, 3600),
     "manifest_read": (1000, 60),
+    # Выше, чем manifest_read/torrent_download: на одной загрузке главной
+    # страницы (recent+random, см. home_page) браузер запрашивает до 24
+    # превью разом — тот же "один визит" при более скромных per-минутных
+    # лимитах выглядел бы как подозрительный всплеск запросов.
+    "thumbnail_read": (4000, 60),
     "torrent_download": (1500, 60),
     "search": (300, 60),
     "channel_videos": (1000, 60),

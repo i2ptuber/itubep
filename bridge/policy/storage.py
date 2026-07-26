@@ -352,6 +352,24 @@ class PolicyStorage:
     def set_max_video_torrent_files(self, value: int):
         self.set_setting("max_video_torrent_files", str(value))
 
+    def get_max_thumbnail_bytes(self) -> int:
+        """
+        Верхний предел размера УЖЕ СЖАТОГО превью, которое мост согласится
+        отправить на сайт при публикации (см. snark/thumbnail.py). Должен
+        совпадать с тем, что реально проверяет сайт (site/app/main.py:
+        MAX_THUMBNAIL_BYTES) — сайт всё равно проверяет размер независимо
+        (это его собственная защита от чужих не-нашего-моста клиентов), но
+        если константы разойдутся, мост будет впустую тратить время на
+        пересжатие до предела, которого сайт на самом деле не даёт, — или
+        наоборот, решит, что превью "не влезает", хотя сайт бы его принял.
+        100 КБ — согласованное значение (см. обсуждение констант превью):
+        320×180, WebP, с запасом под 24 превью на главной странице сайта.
+        """
+        return int(self.get_setting("max_thumbnail_bytes", str(100 * 1024)))
+
+    def set_max_thumbnail_bytes(self, value: int):
+        self.set_setting("max_thumbnail_bytes", str(value))
+
     def find_torrent_for_video(self, owner_origin: str, video_id: str) -> int | None:
         row = self.conn.execute(
             "SELECT torrent_id FROM torrent_ownership WHERE owner_origin = ? AND video_id = ?",

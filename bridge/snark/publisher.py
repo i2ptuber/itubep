@@ -23,6 +23,7 @@ from urllib.parse import urlparse
 
 from .torrent_builder import TorrentFile, build_torrent_with_hash
 from .integration import SnarkIntegration
+from .thumbnail import compress_thumbnail, ThumbnailError
 from policy.crypto_utils import ChannelIdentity, canonical_json_for_id
 from policy.origin_validation import is_i2p_host, _DEV_HOSTS
 from .integration import VideoTorrentHandle
@@ -157,10 +158,17 @@ def compute_content_id(segments: list[Path]) -> str:
 
 
 class VideoPublisher:
-    def __init__(self, snark: SnarkIntegration, channel: ChannelIdentity, http_proxy: str | None = None):
+    def __init__(
+        self,
+        snark: SnarkIntegration,
+        channel: ChannelIdentity,
+        http_proxy: str | None = None,
+        max_thumbnail_bytes: int = 100 * 1024,
+    ):
         self.snark = snark
         self.channel = channel
         self.http_proxy = http_proxy
+        self.max_thumbnail_bytes = max_thumbnail_bytes
 
     def publish(
         self,
@@ -170,6 +178,7 @@ class VideoPublisher:
         site_base_url: str,
         segment_seconds: int = 3,
         work_dir: Path | None = None,
+        thumbnail_path: Path | None = None,
     ) -> dict:
         work_dir = work_dir or Path.home() / ".cache" / "itubep-bridge" / "publish" / str(int(time.time()))
 
@@ -184,6 +193,21 @@ class VideoPublisher:
             name=torrent_name, files=torrent_files, trackers=self.snark.trackers,
         )
 
+        # Превью — необязательно, и в отличие от самого видео (которое
+        # ходит только по BitTorrent между зрителями) байты превью реально
+        # ложатся на диск САЙТА, поэтому сжимаем агрессивно, под лимит,
+        # который задаёт сайт (self.max_thumbnail_bytes — см. обсуждение
+        # констант и PolicyStorage.get_max_thumbnail_bytes). Если картинку
+        # не удалось уместить ни одной из ступеней сжатия — публикуем без
+        # превью, а не превышаем лимит сайта или шлём "как получилось".
+        thumbnail_bytes: bytes | None = None
+        if thumbnail_path is not None:
+            try:
+                thumbnail_bytes = compress_thumbnail(thumbnail_path, self.max_thumbnail_bytes)
+            except ThumbnailError as e:
+                log.warning("Превью не будет отправлено: %s", e)
+                thumbnail_bytes = None
+
         manifest_draft = {
             "channel_id": self.channel.channel_id,
             "title": title,
@@ -197,6 +221,15 @@ class VideoPublisher:
             }],
             "published_at": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
         }
+        if thumbnail_bytes is not None:
+            # Часть манифеста, а значит — часть подписанных данных (см.
+            # canonical_json/canonical_json_for_id в policy/crypto_utils.py,
+            # оба работают с произвольным dict, отдельных правок не нужно).
+            # Сайт при получении сверяет sha256 присланного файла с этим
+            # полем ДО того, как вообще посмотреть на его содержимое —
+            # значит подменить превью после подписи (или подсунуть чужое
+            # под чужой манифест) невозможно без переподписи ключом канала.
+            manifest_draft["thumbnail_sha256"] = hashlib.sha256(thumbnail_bytes).hexdigest()
 
         video_id = hashlib.sha256(canonical_json_for_id(manifest_draft)).hexdigest()
 
@@ -253,11 +286,15 @@ class VideoPublisher:
         manifest_draft["video_id"] = video_id
         manifest_draft["signature"] = self.channel.sign(manifest_draft)
 
+        files = {"torrents": (f"{torrent_name}.torrent", torrent_bytes, "application/x-bittorrent")}
+        if thumbnail_bytes is not None:
+            files["thumbnail"] = (f"{torrent_name}.webp", thumbnail_bytes, "image/webp")
+
         try:
             resp = _requests_session_for(site_base_url, self.http_proxy).post(
                 f"{site_base_url.rstrip('/')}/api/video/publish",
                 data={"manifest_json": json.dumps(manifest_draft)},
-                files={"torrents": (f"{torrent_name}.torrent", torrent_bytes, "application/x-bittorrent")},
+                files=files,
                 timeout=I2P_REQUEST_TIMEOUT_SECONDS,
             )
         except requests.RequestException as e:

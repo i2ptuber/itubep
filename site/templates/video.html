@@ -6,7 +6,8 @@
 
     <!-- Плеер: рендерится только если JS включён и мост доступен -->
     <div id="player-container" style="display:none;">
-        <video id="video-player" controls width="100%"></video>
+        <video id="video-player" controls width="100%"
+               {% if video.has_thumbnail %}poster="/api/video/{{ video.video_id }}/thumbnail"{% endif %}></video>
         <div id="player-status"></div>
     </div>
 

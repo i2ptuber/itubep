@@ -4,21 +4,24 @@ main.py — точка входа FastAPI-приложения.
 
 from __future__ import annotations
 
+import hashlib
+import io
 import json
 
 from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
 from fastapi import FastAPI, HTTPException, Request, Depends, UploadFile, File, Form
-from fastapi.responses import HTMLResponse, RedirectResponse
+from fastapi.responses import HTMLResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
+from PIL import Image, UnidentifiedImageError
 
 from .database import get_session, init_models, async_session
 from .models import Channel, Video, VideoChunk, RateLimitConfig, VideoReaction, Comment
 from .schemas import (
     ChannelRegisterRequest, ChannelResponse, SearchResultItem, SearchResponse,
     VideoListItem, ChannelVideosResponse, StudioUpdateRequest,
-    StudioAuthRequest, StudioStateResponse,
+    StudioAuthRequest, StudioStateResponse, StudioThumbnailAuthRequest, StudioVideoUpdateRequest,
     ReactionRequest, ReactionResponse, CommentCreateRequest, CommentItem, CommentsListResponse,
 )
 from sqlalchemy.exc import IntegrityError
@@ -41,6 +44,68 @@ import os
 # подписанной для чужого сайта и просто реплеенной сюда, — см.
 # _require_audience_matches_this_site ниже.
 SITE_ORIGIN = os.environ.get("ITUBEP_SITE_ORIGIN", "").rstrip("/")
+
+# --- Превью видео ---
+# Должно совпадать с тем, что мост целится уместить при сжатии (см.
+# bridge/policy/storage.py:get_max_thumbnail_bytes) — иначе мост будет либо
+# впустую пересжимать под предел, которого сайт на деле не даёт, либо
+# наоборот решит, что превью "не влезает", хотя сайт бы его принял. Но даже
+# при рассинхроне констант сайт всё равно НЕ доверяет мосту слепо — эта
+# проверка своя, независимая (см. _validate_thumbnail ниже): она защищает
+# от ЛЮБОГО клиента, не только от штатного моста itubep. 100 КБ — с
+# запасом под 24 превью на одной загрузке главной страницы (recent+random).
+MAX_THUMBNAIL_BYTES = 100 * 1024
+# Отдельно от лимита БАЙТОВ — предел РАЗРЕШЕНИЯ декодированной картинки.
+# Без него маленький по размеру файла, но "decompression bomb" (например,
+# однотонный PNG с огромным количеством пикселей — сжимается почти в
+# ничто, а в памяти разворачивается в гигабайты) прошёл бы проверку размера
+# файла, но обрушил бы память сайта при декодировании через Pillow. Мост
+# целится в 320×180 — тут с большим запасом на будущее (другие форматы
+# превью), но не "без ограничений".
+MAX_THUMBNAIL_PIXELS = 1280 * 720
+
+
+def _validate_thumbnail(raw: bytes, expected_sha256: str | None) -> str:
+    """
+    Независимая (не доверяющая мосту) проверка присланного превью.
+    Возвращает content-type для сохранения. Бросает HTTPException при
+    любом несоответствии — публикация видео в этом случае целиком
+    отклоняется (а не "публикуем без превью"): раз манифест ЗАЯВИЛ
+    thumbnail_sha256 и подписал его, несовпадение — это либо баг в
+    публикующем клиенте, либо попытка подсунуть чужое превью под чужую
+    подпись, в обоих случаях правильный ответ — отказ, а не молчаливая
+    правка присланных данных.
+    """
+    if not expected_sha256:
+        raise HTTPException(status_code=400, detail="Manifest has no thumbnail_sha256 but a thumbnail file was sent")
+    if len(raw) > MAX_THUMBNAIL_BYTES:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Thumbnail too large: {len(raw)} bytes (limit {MAX_THUMBNAIL_BYTES})",
+        )
+    if hashlib.sha256(raw).hexdigest() != expected_sha256:
+        raise HTTPException(status_code=400, detail="Thumbnail does not match manifest thumbnail_sha256")
+
+    try:
+        with Image.open(io.BytesIO(raw)) as img:
+            img.verify()  # структурная проверка без полного декодирования пикселей
+        # verify() "использует" файловый объект — переоткрываем для реальных
+        # атрибутов (Pillow явно требует новый Image после verify()).
+        with Image.open(io.BytesIO(raw)) as img:
+            width, height = img.size
+            fmt = img.format
+    except (UnidentifiedImageError, OSError):
+        raise HTTPException(status_code=400, detail="Thumbnail is not a valid image")
+
+    if width * height > MAX_THUMBNAIL_PIXELS:
+        raise HTTPException(
+            status_code=400,
+            detail=f"Thumbnail resolution too large: {width}x{height}",
+        )
+    if fmt not in ("WEBP", "JPEG", "PNG"):
+        raise HTTPException(status_code=400, detail=f"Unsupported thumbnail format: {fmt}")
+
+    return {"WEBP": "image/webp", "JPEG": "image/jpeg", "PNG": "image/png"}[fmt]
 
 if not SITE_ORIGIN:
     import logging
@@ -223,6 +288,115 @@ async def studio_update(
     return {"status": "ok", "channel_id": channel_id}
 
 
+@app.post("/api/channel/{channel_id}/studio/video")
+async def update_studio_video(
+    channel_id: str,
+    req: StudioVideoUpdateRequest,
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Сохранение "Сведений о видео" со страницы /studio/video/{id} — title/
+    description/access_level ОДНОГО видео. Вызывается мостом (bridge/
+    policy/authz.py:update_video_details). Как и /api/channel/{id}/studio,
+    это site-side мутируемые колонки Video — исходный подписанный
+    manifest_json не трогается (см. docstring StudioVideoUpdateRequest).
+    """
+    import time as _time
+
+    if req.channel_id != channel_id:
+        raise HTTPException(status_code=400, detail="channel_id mismatch between path and body")
+
+    enforce("studio_video_update_id", channel_id)
+
+    channel = await session.get(Channel, channel_id)
+    if channel is None:
+        raise HTTPException(status_code=404, detail="Unknown channel_id")
+    if channel.banned:
+        raise HTTPException(status_code=403, detail="Канал заблокирован держателем сайта")
+
+    if not verify_signature(req.model_dump(), channel.public_key):
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    _require_audience_matches_this_site(req.model_dump())
+
+    try:
+        ts = float(req.updated_at)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid updated_at")
+    if abs(_time.time() - ts) > STUDIO_STATE_TIMESTAMP_TOLERANCE_SECONDS:
+        raise HTTPException(status_code=403, detail="Timestamp too old or too far in the future")
+
+    video = await session.get(Video, req.video_id)
+    if video is None or video.channel_id != channel_id:
+        raise HTTPException(status_code=400, detail="Video does not belong to this channel")
+
+    video.title = req.title
+    video.description = req.description
+    video.access_level = req.access_level
+    await session.commit()
+
+    return {"status": "ok", "video_id": video.video_id}
+
+
+@app.post("/api/channel/{channel_id}/studio/thumbnail")
+async def update_studio_thumbnail(
+    channel_id: str,
+    auth_json: str = Form(...),
+    thumbnail: UploadFile = File(...),
+    session: AsyncSession = Depends(get_session),
+):
+    """
+    Замена превью УЖЕ опубликованного видео из студии — вызывается мостом
+    (bridge/policy/authz.py:update_thumbnail), не напрямую браузером.
+    Form+File (не чистый JSON, как остальные студийные эндпоинты) — тот же
+    паттерн, что /api/video/publish: signed-запись отдельным полем формы,
+    потому что файл бинарный. Проверка присланного файла (размер/sha256/
+    реальный формат/пиксели) та же _validate_thumbnail, что и при
+    первоначальной публикации — сайт одинаково не доверяет мосту байты
+    файла независимо от точки входа.
+    """
+    import time as _time
+
+    try:
+        auth = StudioThumbnailAuthRequest.model_validate_json(auth_json)
+    except Exception:
+        raise HTTPException(status_code=400, detail="Invalid auth_json")
+
+    if auth.channel_id != channel_id:
+        raise HTTPException(status_code=400, detail="channel_id mismatch between path and body")
+
+    enforce("studio_thumbnail_id", channel_id)
+
+    channel = await session.get(Channel, channel_id)
+    if channel is None:
+        raise HTTPException(status_code=404, detail="Unknown channel_id")
+    if channel.banned:
+        raise HTTPException(status_code=403, detail="Канал заблокирован держателем сайта")
+
+    if not verify_signature(auth.model_dump(), channel.public_key):
+        raise HTTPException(status_code=400, detail="Invalid signature")
+    _require_audience_matches_this_site(auth.model_dump())
+
+    try:
+        ts = float(auth.updated_at)
+    except ValueError:
+        raise HTTPException(status_code=400, detail="Invalid updated_at")
+    if abs(_time.time() - ts) > STUDIO_STATE_TIMESTAMP_TOLERANCE_SECONDS:
+        raise HTTPException(status_code=403, detail="Timestamp too old or too far in the future")
+
+    video = await session.get(Video, auth.video_id)
+    if video is None or video.channel_id != channel_id:
+        raise HTTPException(status_code=400, detail="Video does not belong to this channel")
+
+    raw = await thumbnail.read()
+    content_type = _validate_thumbnail(raw, auth.thumbnail_sha256)
+
+    video.thumbnail = raw
+    video.thumbnail_content_type = content_type
+    await session.commit()
+
+    return {"status": "ok", "video_id": video.video_id}
+
+
 STUDIO_STATE_TIMESTAMP_TOLERANCE_SECONDS = 300  # окно свежести для read-запроса (не монотонный счётчик — просто анти-replay "не старше N минут")
 
 
@@ -266,7 +440,14 @@ async def studio_state(
 
     result = await session.execute(
         select(Video)
-        .where(Video.channel_id == channel_id, Video.removed == False)  # noqa: E712
+        # В ОТЛИЧИЕ от студийного эндпоинта раньше: убранные держателем
+        # сайта видео (Video.removed) больше НЕ исключаются из выдачи —
+        # иначе владелец канала не мог бы вообще узнать, что его видео
+        # удалили и почему (removed_reason). Публичные read-пути (главная,
+        # поиск, страница канала) removed по-прежнему полностью скрывают —
+        # это касается только этой, авторизованной подписью, студийной
+        # выдачи для самого владельца.
+        .where(Video.channel_id == channel_id)
         .order_by(Video.published_at.desc())
     )
     videos = result.scalars().all()
@@ -281,10 +462,16 @@ async def studio_state(
             VideoListItem(
                 video_id=v.video_id,
                 title=v.title,
+                description=v.description,
                 duration_seconds=v.duration_seconds,
                 download_count=v.download_count,
+                comment_count=v.comment_count,
                 published_at=v.published_at.isoformat(),
                 access_level=v.access_level,
+                has_thumbnail=v.thumbnail is not None,
+                removed=v.removed,
+                removed_reason=v.removed_reason,
+                qualities=[q.get("label", "") for q in json.loads(v.manifest_json).get("qualities", [])],
             )
             for v in videos
         ],
@@ -476,6 +663,7 @@ async def post_comment(
 async def publish_video(
     manifest_json: str = Form(...),
     torrents: list[UploadFile] = File(...),
+    thumbnail: UploadFile | None = File(None),
     session: AsyncSession = Depends(get_session),
 ):
     try:
@@ -514,6 +702,13 @@ async def publish_video(
             detail=f"Mismatch: {len(qualities)} qualities in manifest, {len(torrents)} torrent files uploaded",
         )
 
+    thumbnail_bytes: bytes | None = None
+    thumbnail_content_type = ""
+    if thumbnail is not None:
+        raw = await thumbnail.read()
+        thumbnail_content_type = _validate_thumbnail(raw, manifest.get("thumbnail_sha256"))
+        thumbnail_bytes = raw
+
     video = Video(
         video_id=video_id,
         channel_id=manifest["channel_id"],
@@ -522,6 +717,8 @@ async def publish_video(
         duration_seconds=manifest.get("duration", 0),
         manifest_json=json.dumps(manifest),
         signature=manifest["signature"],
+        thumbnail=thumbnail_bytes,
+        thumbnail_content_type=thumbnail_content_type,
     )
     session.add(video)
 
@@ -538,6 +735,24 @@ async def publish_video(
     await session.commit()
 
     return {"video_id": video_id, "status": "published"}
+
+
+@app.get("/api/video/{video_id}/thumbnail")
+async def get_thumbnail(video_id: str, session: AsyncSession = Depends(get_session)):
+    enforce("thumbnail_read")
+    video = await session.get(Video, video_id)
+    if video is None or video.removed or video.access_level == "private" or video.thumbnail is None:
+        raise HTTPException(status_code=404, detail="No thumbnail for this video")
+    return Response(
+        content=video.thumbnail,
+        media_type=video.thumbnail_content_type or "image/webp",
+        # video_id — sha256 контента, thumbnail_sha256 в него входит (см.
+        # bridge/policy/crypto_utils.py:canonical_json_for_id) — то есть
+        # превью для ДАННОГО video_id физически не может смениться, можно
+        # кешировать агрессивно и надолго, экономя трафик I2P на каждой
+        # повторной загрузке ленты/канала.
+        headers={"Cache-Control": "public, max-age=604800, immutable"},
+    )
 
 
 @app.get("/api/video/{video_id}/manifest")
@@ -711,7 +926,7 @@ async def home_page(request: Request, q: str = "", session: AsyncSession = Depen
         enforce("search")
         sql = text("""
             SELECT DISTINCT v.video_id, v.title, c.display_name AS channel_display_name,
-                   v.duration_seconds,
+                   v.duration_seconds, v.thumbnail IS NOT NULL AS has_thumbnail,
                    ts_rank(
                        to_tsvector('simple', v.title || ' ' || v.description || ' ' || c.display_name),
                        plainto_tsquery('simple', :query)
@@ -735,7 +950,8 @@ async def home_page(request: Request, q: str = "", session: AsyncSession = Depen
         enforce("home_feed")
 
         recent_sql = text("""
-            SELECT v.video_id, v.title, c.display_name AS channel_display_name, v.duration_seconds
+            SELECT v.video_id, v.title, c.display_name AS channel_display_name, v.duration_seconds,
+                   v.thumbnail IS NOT NULL AS has_thumbnail
             FROM videos v
             JOIN channels c ON v.channel_id = c.channel_id
             WHERE v.removed = false AND v.access_level = 'public' AND c.banned = false
@@ -751,7 +967,8 @@ async def home_page(request: Request, q: str = "", session: AsyncSession = Depen
         # отдельной инфраструктуры для сэмплирования; берём с запасом на
         # длину recent_ids, чтобы после фильтрации осталось 16.
         random_sql = text("""
-            SELECT v.video_id, v.title, c.display_name AS channel_display_name, v.duration_seconds
+            SELECT v.video_id, v.title, c.display_name AS channel_display_name, v.duration_seconds,
+                   v.thumbnail IS NOT NULL AS has_thumbnail
             FROM videos v
             JOIN channels c ON v.channel_id = c.channel_id
             WHERE v.removed = false AND v.access_level = 'public' AND c.banned = false
@@ -838,6 +1055,7 @@ async def video_page(
                 "like_count": video.like_count,
                 "dislike_count": video.dislike_count,
                 "comment_count": video.comment_count,
+                "has_thumbnail": video.thumbnail is not None,
             },
             "channel_display_name": (channel.site_display_name or channel.display_name) if channel else "Unknown",
             **_i18n_ctx(request),
@@ -860,6 +1078,21 @@ async def studio_page(request: Request):
     криптографические channel_id/подписи.
     """
     return templates.TemplateResponse(request, "studio.html", _i18n_ctx(request))
+
+
+@app.get("/studio/video/{video_id}", response_class=HTMLResponse)
+async def studio_video_edit_page(request: Request, video_id: str):
+    """
+    "Сведения о видео" — редактирование ОДНОГО видео (title/description/
+    доступ/превью). Как и /studio, страница — просто оболочка: сам video_id
+    из URL, все реальные данные (включая проверку, что видео вообще
+    принадлежит владельцу этого канала) страница получает на клиенте через
+    мост (GET /bridge/studio/state), тем же способом, что и список студии —
+    сайт по-прежнему не знает, "чей сейчас браузер".
+    """
+    return templates.TemplateResponse(
+        request, "studio_edit.html", {"video_id": video_id, **_i18n_ctx(request)},
+    )
 
 
 @app.get("/channels", response_class=HTMLResponse)

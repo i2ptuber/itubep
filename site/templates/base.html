@@ -19,7 +19,7 @@
     <script>window.ITUBEP_STRINGS = {{ js_strings|tojson }};</script>
     <script src="/static/i18n.js"></script>
 </head>
-<body>
+<body class="{% block body_class %}{% endblock %}">
     <header>
         <a href="/" class="logo">ITubeP</a>
         <a href="/publish" class="publish-link">{{ t('nav.publish') }}</a>

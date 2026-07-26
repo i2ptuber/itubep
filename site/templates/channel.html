@@ -11,7 +11,11 @@
         <h2 class="pinned-heading">{{ t('channel.pinned') }}</h2>
         <div class="video-grid pinned-video-grid">
             <a class="video-card" href="/video/{{ pinned_video.video_id }}">
-                <div class="video-thumb-placeholder"></div>
+                {% if pinned_video.thumbnail %}
+                    <img class="video-thumb" src="/api/video/{{ pinned_video.video_id }}/thumbnail" alt="" loading="lazy">
+                {% else %}
+                    <div class="video-thumb-placeholder"></div>
+                {% endif %}
                 <div class="video-title">{{ pinned_video.title }}</div>
                 <div class="video-meta">{{ pinned_video.duration_seconds }} {{ t('search.sec') }} · {{ pinned_video.download_count }} {{ t('channel.downloads') }}</div>
             </a>
@@ -21,7 +25,11 @@
     <div class="video-grid">
         {% for v in videos %}
         <a class="video-card" href="/video/{{ v.video_id }}">
-            <div class="video-thumb-placeholder"></div>
+            {% if v.thumbnail %}
+                <img class="video-thumb" src="/api/video/{{ v.video_id }}/thumbnail" alt="" loading="lazy">
+            {% else %}
+                <div class="video-thumb-placeholder"></div>
+            {% endif %}
             <div class="video-title">{{ v.title }}</div>
             <div class="video-meta">{{ v.duration_seconds }} {{ t('search.sec') }} · {{ v.download_count }} {{ t('channel.downloads') }}</div>
         </a>

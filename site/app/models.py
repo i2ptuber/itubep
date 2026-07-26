@@ -65,6 +65,19 @@ class Video(Base):
     published_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     download_count: Mapped[int] = mapped_column(Integer, default=0)
 
+    # --- Превью (необязательное) ---
+    # BLOB, не файл на диске — тот же выбор, что и для .torrent в
+    # VideoChunk.torrent_file ниже: одна БД-транзакция на публикацию, без
+    # отдельной синхронизации "файл создан, но транзакция откатилась" и
+    # без отдельного volume/backup-контура только под картинки. Уже сжато
+    # мостом ДО отправки (см. bridge/snark/thumbnail.py) под лимит
+    # MAX_THUMBNAIL_BYTES (main.py) — сайт при приёме заново проверяет и
+    # размер, и что это действительно валидное изображение (см.
+    # publish_video), не доверяя мосту слепо. NULL — превью нет, это
+    # штатный случай (пользователь мог не выбрать картинку), а не ошибка.
+    thumbnail: Mapped[bytes | None] = mapped_column(nullable=True)
+    thumbnail_content_type: Mapped[str] = mapped_column(String(40), default="")
+
     # --- Модерация (держателем сайта) ---
     # Аналогично: soft-delete, не физическое удаление строки — video_id это
     # sha256 от манифеста, при жёстком удалении можно было бы попытаться

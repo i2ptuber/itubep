@@ -208,6 +208,24 @@ class PublishDialogs:
         root.destroy()
         return path or None
 
+    def choose_thumbnail_file(self) -> str | None:
+        """
+        Необязательный выбор картинки для превью — Cancel (или закрытие
+        диалога) означает "без превью", а не ошибку: в отличие от выбора
+        видеофайла, это не обязательный шаг мастера публикации.
+        """
+        root = tk.Tk()
+        root.withdraw()
+        path = filedialog.askopenfilename(
+            title=t("publish.choose_thumbnail_title"),
+            filetypes=[
+                (t("publish.filetype_image"), "*.jpg *.jpeg *.png *.webp *.bmp"),
+                (t("publish.filetype_all"), "*.*"),
+            ],
+        )
+        root.destroy()
+        return path or None
+
     def _prompt_text(self, title: str, prompt: str) -> str | None:
         result = {"value": None}
         root = tk.Tk()
