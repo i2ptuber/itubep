@@ -683,7 +683,7 @@ async def post_comment(
 @app.post("/api/video/publish")
 async def publish_video(
     manifest_json: str = Form(...),
-    torrents: list[UploadFile] = File(...),
+    torrent: UploadFile = File(...),
     thumbnail: UploadFile | None = File(None),
     session: AsyncSession = Depends(get_session),
 ):
@@ -716,11 +716,20 @@ async def publish_video(
     if existing is not None:
         raise HTTPException(status_code=409, detail="Video with this video_id already exists")
 
+    # Единый торрент на ВСЕ качества (см. bridge/snark/publisher.py) —
+    # каждый элемент qualities описывает только свой диапазон файлов
+    # внутри него, не отдельный торрент. torrent_infohash/torrent_name
+    # обязательны в манифесте — без них нечем проверить, что зритель
+    # получит именно ЭТОТ файл при добавлении торрента в мост.
     qualities = manifest.get("qualities", [])
-    if len(qualities) != len(torrents):
+    torrent_infohash = manifest.get("torrent_infohash")
+    torrent_name = manifest.get("torrent_name")
+    if not qualities:
+        raise HTTPException(status_code=400, detail="Manifest has no qualities")
+    if not torrent_infohash or not torrent_name:
         raise HTTPException(
             status_code=400,
-            detail=f"Mismatch: {len(qualities)} qualities in manifest, {len(torrents)} torrent files uploaded",
+            detail="Manifest must include torrent_infohash and torrent_name",
         )
 
     # Обязательная авторская отметка NSFW (см. schemas.py:VideoManifest.nsfw
@@ -742,6 +751,8 @@ async def publish_video(
         thumbnail_content_type = _validate_thumbnail(raw, manifest.get("thumbnail_sha256"))
         thumbnail_bytes = raw
 
+    torrent_bytes = await torrent.read()
+
     video = Video(
         video_id=video_id,
         channel_id=manifest["channel_id"],
@@ -753,16 +764,19 @@ async def publish_video(
         thumbnail=thumbnail_bytes,
         thumbnail_content_type=thumbnail_content_type,
         nsfw=nsfw,
+        torrent_infohash=torrent_infohash,
+        torrent_name=torrent_name,
+        torrent_file=torrent_bytes,
     )
     session.add(video)
 
-    for quality_meta, torrent_file in zip(qualities, torrents):
-        torrent_bytes = await torrent_file.read()
+    for quality_meta in qualities:
         chunk = VideoChunk(
             video_id=video_id,
             quality=quality_meta["label"],
-            torrent_infohash=quality_meta["torrent_infohash"],
-            torrent_file=torrent_bytes,
+            file_start_index=quality_meta.get("file_start_index", 0),
+            file_count=quality_meta.get("file_count", 0),
+            segment_durations_json=json.dumps(quality_meta.get("segment_durations", [])),
         )
         session.add(chunk)
 
@@ -798,9 +812,9 @@ async def get_manifest(video_id: str, session: AsyncSession = Depends(get_sessio
     return json.loads(video.manifest_json)
 
 
-@app.get("/api/video/{video_id}/chunk/{quality}.torrent")
+@app.get("/api/video/{video_id}/torrent")
 async def get_torrent(
-    video_id: str, quality: str, session: AsyncSession = Depends(get_session),
+    video_id: str, session: AsyncSession = Depends(get_session),
 ):
     from fastapi.responses import Response
 
@@ -809,20 +823,13 @@ async def get_torrent(
     video = await session.get(Video, video_id)
     if video is None or video.removed or video.access_level == "private":
         raise HTTPException(status_code=404, detail="Video not found")
-
-    result = await session.execute(
-        select(VideoChunk).where(
-            VideoChunk.video_id == video_id, VideoChunk.quality == quality,
-        )
-    )
-    chunk = result.scalar_one_or_none()
-    if chunk is None:
-        raise HTTPException(status_code=404, detail="Chunk not found")
+    if not video.torrent_file:
+        raise HTTPException(status_code=404, detail="Torrent not found")
 
     video.download_count += 1
     await session.commit()
 
-    return Response(content=chunk.torrent_file, media_type="application/x-bittorrent")
+    return Response(content=video.torrent_file, media_type="application/x-bittorrent")
     
 @app.get("/api/search", response_model=SearchResponse)
 async def search_videos(
@@ -1141,6 +1148,7 @@ async def video_page(
                 "title": video.title,
                 "description": video.description,
                 "qualities": manifest.get("qualities", []),
+                "torrent_name": manifest.get("torrent_name", ""),
                 "like_count": video.like_count,
                 "dislike_count": video.dislike_count,
                 "comment_count": video.comment_count,

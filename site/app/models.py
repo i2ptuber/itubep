@@ -65,6 +65,20 @@ class Video(Base):
     published_at: Mapped[datetime] = mapped_column(DateTime, default=datetime.utcnow)
     download_count: Mapped[int] = mapped_column(Integer, default=0)
 
+    # --- Единый торрент на ВСЕ качества видео ---
+    # Раньше у каждого качества был свой независимый .torrent (хранился на
+    # VideoChunk.torrent_file/torrent_infohash) — переключение качества при
+    # просмотре означало бы докачку ВТОРОГО торрента с нуля. Теперь сегменты
+    # всех качеств, выбранных автором при публикации, лежат в ОДНОМ
+    # multi-file торренте (см. bridge/snark/publisher.py:VideoPublisher.publish) —
+    # переключение качества зрителем это только смена приоритета файлов
+    # внутри уже добавленного торрента (см. bridge/snark/integration.py:
+    # set_quality_priority), а не отдельная докачка. См. миграцию
+    # scripts/migrate_add_unified_torrent.py для уже опубликованных видео.
+    torrent_infohash: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    torrent_name: Mapped[str] = mapped_column(String(64), nullable=False, default="")
+    torrent_file: Mapped[bytes] = mapped_column(nullable=False, default=b"")
+
     # --- Превью (необязательное) ---
     # BLOB, не файл на диске — тот же выбор, что и для .torrent в
     # VideoChunk.torrent_file ниже: одна БД-транзакция на публикацию, без
@@ -124,13 +138,22 @@ class Video(Base):
 
 
 class VideoChunk(Base):
+    """
+    Метаданные ОДНОГО качества внутри единого торрента видео (см.
+    Video.torrent_infohash/torrent_name/torrent_file выше) — своего
+    .torrent/infohash у качества больше нет, вместо этого — диапазон
+    файлов [file_start_index, file_start_index+file_count) внутри общего
+    торрента и собственные длительности HLS-сегментов этого качества
+    (нужны для генерации плейлиста, см. bridge/transport/http_server.py:playlist).
+    """
     __tablename__ = "video_chunks"
 
     id: Mapped[int] = mapped_column(Integer, primary_key=True, autoincrement=True)
     video_id: Mapped[str] = mapped_column(ForeignKey("videos.video_id"), nullable=False)
     quality: Mapped[str] = mapped_column(String(20), nullable=False)  # "360p" и т.п.
-    torrent_infohash: Mapped[str] = mapped_column(String(64), nullable=False)
-    torrent_file: Mapped[bytes] = mapped_column(nullable=False)  # сам .torrent, BLOB
+    file_start_index: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    file_count: Mapped[int] = mapped_column(Integer, nullable=False, default=0)
+    segment_durations_json: Mapped[str] = mapped_column(Text, nullable=False, default="[]")
 
     video: Mapped["Video"] = relationship(back_populates="chunks")
 

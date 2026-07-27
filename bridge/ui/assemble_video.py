@@ -48,7 +48,8 @@ from pathlib import Path
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 from i18n import t
 
-SEGMENT_RE = re.compile(r"^segment_(\d{4,})\.ts$")
+SEGMENT_RE_TEMPLATE = r"^segment_(\d{{4,}})_{quality}\.ts$"
+_KNOWN_QUALITIES = ("360p", "480p", "720p", "1080p")
 
 
 class AssembleError(Exception):
@@ -71,13 +72,20 @@ def default_storage_dir() -> Path:
         return Path.home() / "i2psnark-run" / "i2psnark"
 
 
-def find_segments(torrent_dir: Path) -> list[tuple[int, Path]]:
+def find_segments(torrent_dir: Path, quality: str) -> list[tuple[int, Path]]:
     if not torrent_dir.is_dir():
         raise AssembleError(t("assemble.dir_not_found", dir=torrent_dir))
 
+    # ВАЖНО: с появлением единого multi-quality торрента (см.
+    # bridge/snark/publisher.py) в этой директории лежат сегменты ВСЕХ
+    # качеств, опубликованных автором, вперемешку — имя файла включает
+    # суффикс качества ("segment_0000_720p.ts"), поэтому quality обязателен:
+    # без фильтрации по нему склейка перемешала бы кадры разных разрешений.
+    segment_re = re.compile(SEGMENT_RE_TEMPLATE.format(quality=re.escape(quality)))
+
     found: list[tuple[int, Path]] = []
     for p in torrent_dir.iterdir():
-        m = SEGMENT_RE.match(p.name)
+        m = segment_re.match(p.name)
         if m:
             found.append((int(m.group(1)), p))
 
@@ -113,13 +121,14 @@ def check_gaps(segments: list[tuple[int, Path]], allow_partial: bool) -> list[tu
 
 def assemble(
     torrent_name: str,
+    quality: str,
     storage_dir: Path,
     output: Path | None,
     allow_partial: bool,
     keep_ts: bool,
 ) -> Path:
     torrent_dir = storage_dir / torrent_name
-    segments = find_segments(torrent_dir)
+    segments = find_segments(torrent_dir, quality)
     usable = check_gaps(segments, allow_partial)
 
     if not usable:
@@ -127,7 +136,7 @@ def assemble(
 
     print(t("assemble.assembling", usable=len(usable), total=len(segments)))
 
-    output = output or torrent_dir.with_suffix(".mp4")
+    output = output or torrent_dir.with_name(f"{torrent_dir.name}_{quality}").with_suffix(".mp4")
     output.parent.mkdir(parents=True, exist_ok=True)
 
     ffmpeg = shutil.which("ffmpeg")
@@ -176,6 +185,8 @@ def main():
         description=t("assemble.arg_description"),
     )
     parser.add_argument("torrent_name", help=t("assemble.arg_torrent_name"))
+    parser.add_argument("--quality", required=True, choices=_KNOWN_QUALITIES,
+                         help=t("assemble.arg_quality"))
     parser.add_argument("--storage-dir", type=Path, default=None,
                          help=t("assemble.arg_storage_dir"))
     parser.add_argument("--output", type=Path, default=None,
@@ -190,7 +201,7 @@ def main():
 
     try:
         output = assemble(
-            args.torrent_name, storage_dir, args.output, args.allow_partial, args.keep_ts,
+            args.torrent_name, args.quality, storage_dir, args.output, args.allow_partial, args.keep_ts,
         )
     except AssembleError as e:
         print(t("assemble.error_prefix", error=e), file=sys.stderr)

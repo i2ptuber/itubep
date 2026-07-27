@@ -8,6 +8,10 @@
     <div id="player-container" style="display:none;">
         <video id="video-player" controls width="100%"
                {% if video.has_thumbnail %}poster="/api/video/{{ video.video_id }}/thumbnail"{% endif %}></video>
+        <div id="player-controls">
+            <label for="quality-select">{{ t('video.quality_label') }}</label>
+            <select id="quality-select" style="display:none;"></select>
+        </div>
         <div id="player-status"></div>
     </div>
 
@@ -16,15 +20,17 @@
         <p>{{ t('video.nojs_needs_js') }}
            <a href="/download-bridge">{{ t('video.nojs_bridge_link') }}</a>.</p>
         <p>{{ t('video.nojs_or_download') }}</p>
-        <ul>
-            {% for q in video.qualities %}
-            <li>
-                <a href="/api/video/{{ video.video_id }}/chunk/{{ q.label }}.torrent">
-                    {{ t('video.download_quality').format(quality=q.label) }}
-                </a>
-            </li>
-            {% endfor %}
-        </ul>
+        <!-- Единый торрент содержит сегменты ВСЕХ качеств сразу (см.
+             bridge/snark/publisher.py) — no-JS зрителю больше не нужно
+             выбирать качество на этом шаге, только один раз докачать
+             торрент целиком (или с приоритетами вручную через веб-интерфейс
+             i2psnark) и потом использовать assemble_video.py --quality
+             <label>, чтобы собрать нужное качество в обычный .mp4. -->
+        <p>
+            <a href="/api/video/{{ video.video_id }}/torrent">
+                {{ t('video.download_torrent') }}
+            </a>
+        </p>
     </div>
 
     <!-- Лайк/дизлайк — требуют своего канала (тот же мост, что для
@@ -60,6 +66,7 @@
         window.ITUBEP_VIDEO = {
             video_id: "{{ video.video_id }}",
             qualities: {{ video.qualities|tojson }},
+            torrent_name: "{{ video.torrent_name }}",
             site_origin: window.location.origin
         };
     </script>

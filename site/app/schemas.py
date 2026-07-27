@@ -56,7 +56,9 @@ class StudioUpdateRequest(BaseModel):
         
 class QualityManifest(BaseModel):
     label: str
-    torrent_infohash: str
+    segment_durations: list[float] = Field(default_factory=list)
+    file_start_index: int = 0
+    file_count: int = 0
 
 
 class VideoManifest(BaseModel):
@@ -65,6 +67,11 @@ class VideoManifest(BaseModel):
     title: str = Field(..., min_length=1, max_length=300)
     description: str = ""
     duration: int = 0
+    # Один торрент на ВСЕ качества (см. bridge/snark/publisher.py) — каждое
+    # качество в qualities описывает только свой диапазон файлов внутри
+    # torrent_infohash/torrent_name ниже, не отдельный торрент.
+    torrent_infohash: str = Field(..., min_length=40, max_length=40)  # sha1 hex
+    torrent_name: str = Field(..., min_length=64, max_length=64)  # sha256 hex
     qualities: list[QualityManifest]
     published_at: str
     # sha256(байты превью) — присутствует только если мост прислал превью;

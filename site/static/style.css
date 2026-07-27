@@ -348,6 +348,8 @@ body.studio-page main { max-width: none; padding: 0; margin: 0; }
 /* --- NSFW: обязательный выбор при публикации, бейджи, чекбокс в студии --- */
 .radio-inline { display: inline-flex; align-items: center; gap: 6px; font-weight: normal; margin-right: 18px; }
 .radio-inline input { margin: 0; }
+.checkbox-inline { display: inline-flex; align-items: center; gap: 6px; font-weight: normal; margin-right: 18px; }
+.checkbox-inline input { margin: 0; }
 
 .video-thumb-wrap { position: relative; }
 .nsfw-badge {

@@ -230,6 +230,59 @@ class SnarkIntegration:
         """
         return
 
+    # --- Приоритет при выборе качества ---
+
+    def set_quality_priority(
+        self, handle: VideoTorrentHandle, high_start: int, high_count: int,
+    ) -> None:
+        """
+        Все качества одного видео теперь лежат в ОДНОМ multi-file торренте
+        (см. snark/publisher.py:VideoPublisher.publish) — блоками файлов,
+        каждый блок это сегменты одного качества. Выбор качества зрителем
+        (на сайте, см. player.js) — это не отдельный торрент, а смена
+        приоритета файлов ВНУТРИ уже добавленного торрента: непрерывному
+        диапазону [high_start, high_start+high_count) — сегментам выбранного
+        качества — выставляется приоритет high, всем остальным файлам
+        торрента — normal (НЕ skip: остальные качества должны продолжать
+        докачиваться и раздаваться независимо от того, что сейчас смотрит
+        этот конкретный зритель — это тот же файл на диске, который раздают
+        и другие зрители, выбравшие другое качество).
+
+        ПРИМЕЧАНИЕ (пересмотрено после проверки автором проекта): выше по
+        файлу это же ограничение для set_seek_priority объясняется тем, что
+        stop/start у i2psnark "рвёт все текущие BT-соединения". На практике
+        это не так — соединения не разрываются, а временно (до ~stop_wait_timeout,
+        по умолчанию 10с) приостанавливаются на время применения приоритетов,
+        затем возобновляются. Такая пауза не бесплатна, но она разовая на
+        каждое переключение качества (а не на каждый seek/каждый чанк), и
+        зритель явно инициирует её сам, выбирая качество — это приемлемая
+        цена, в отличие от форсирования приоритета на каждую перемотку.
+
+        ЕСЛИ диапазон [high_start, high_end) УЖЕ полностью скачан — менять
+        приоритеты незачем (нечего докачивать быстрее) и стоп/старт был бы
+        чистым минусом: искусственная пауза без единого практического
+        эффекта. Поэтому в этом случае ничего не делаем и не трогаем
+        i2psnark вообще.
+        """
+        high_end = high_start + high_count
+
+        progress = self.get_progress(handle.torrent_id)
+        files = progress.get("files", [])
+        target_files = files[high_start:high_end]
+        if target_files and all(
+            f["length"] > 0 and f["bytes_completed"] >= f["length"] for f in target_files
+        ):
+            return
+
+        priorities = {
+            i: ("high" if high_start <= i < high_end else "normal")
+            for i in range(handle.total_files)
+        }
+        self._stop_apply_start(
+            handle.torrent_id,
+            lambda: self.web.set_file_priorities(handle.torrent_name, priorities),
+        )
+
     # --- Служебное ---
 
     def _toggle_sequential(self, handle: VideoTorrentHandle, enabled: bool) -> None:
@@ -321,12 +374,22 @@ class SnarkIntegration:
         # чуть раньше, чем данные реально сброшены на диск. Сверяем реальный
         # размер файла, если известно имя торрента.
         if torrent_name is not None:
-            path = self.get_segment_path(torrent_name, file_index)
+            path = self.get_segment_path(torrent_name, f["name"])
             if not path.exists() or path.stat().st_size != f["length"]:
                 return False
 
         return True
 
-    def get_segment_path(self, torrent_name: str, file_index: int) -> Path:
+    def get_segment_path(self, torrent_name: str, segment_filename: str) -> Path:
+        """
+        segment_filename — РЕАЛЬНОЕ имя файла, как его вернул i2psnark (см.
+        get_progress()["files"][i]["name"]), а не восстановленное по
+        шаблону: с появлением качеств в имени файла ("segment_0034_360p.ts",
+        см. bridge/snark/publisher.py) угадывание имени по индексу стало
+        неоднозначным — один и тот же file_index может относиться к любому
+        из выбранных при публикации качеств, и без знания реального имени
+        мы бы либо собрали неверный путь, либо получили 404 на существующий
+        файл (как это уже случилось — index не кодирует качество сам по себе).
+        """
         storage_dir = Path(self.get_real_storage_dir()) / torrent_name
-        return storage_dir / f"segment_{file_index:04d}.ts"
+        return storage_dir / segment_filename

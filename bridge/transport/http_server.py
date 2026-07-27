@@ -169,7 +169,7 @@ def create_app(policy: BridgePolicy) -> web.Application:
         return web.json_response(result)
 
     async def publish_submit(request: web.Request):
-        """Шаг 2 публикации: название/описание/NSFW-отметка с сайта для уже выбранного файла."""
+        """Шаг 2 публикации: название/описание/NSFW-отметка/качества с сайта для уже выбранного файла."""
         token = _extract_token(request)
         body = await request.json()
 
@@ -177,18 +177,42 @@ def create_app(policy: BridgePolicy) -> web.Application:
         title = body.get("title", "")
         description = body.get("description", "")
         nsfw = body.get("nsfw")
+        qualities = body.get("qualities")
         if not publish_session_id:
             return web.json_response({"error": "missing publish_session_id"}, status=400)
         if not isinstance(nsfw, bool):
             return web.json_response({"error": "missing or non-boolean nsfw"}, status=400)
+        if qualities is not None and not (
+            isinstance(qualities, list) and all(isinstance(q, str) for q in qualities)
+        ):
+            return web.json_response({"error": "qualities must be a list of strings"}, status=400)
 
         try:
-            result = policy.finish_publish(token, publish_session_id, title, description, nsfw)
+            result = policy.finish_publish(token, publish_session_id, title, description, nsfw, qualities)
         except PermissionDenied:
             raise
         except Exception as e:
             return web.json_response({"error": str(e)}, status=400)
         return web.json_response(result)
+
+    async def set_quality(request: web.Request):
+        """
+        Зритель переключил качество просмотра — сайт присылает диапазон
+        файлов выбранного качества внутри единого торрента этого видео
+        (см. manifest["qualities"][i].file_start_index/file_count), мост
+        просто выставляет приоритеты (см. BridgePolicy.set_quality).
+        """
+        token = _extract_token(request)
+        body = await request.json()
+
+        torrent_id = body.get("torrent_id")
+        high_start = body.get("high_start")
+        high_count = body.get("high_count")
+        if torrent_id is None or high_start is None or high_count is None:
+            return web.json_response({"error": "missing required fields"}, status=400)
+
+        policy.set_quality(token, torrent_id, int(high_start), int(high_count))
+        return web.json_response({"status": "ok"})
 
     async def stream_token(request: web.Request):
         """
@@ -212,6 +236,22 @@ def create_app(policy: BridgePolicy) -> web.Application:
         stream_tok = request.query.get("stream_token", "")
         torrent_id = int(request.query.get("torrent_id", "0"))
         durations_b64 = request.query.get("durations_b64", "")
+        # Абсолютное смещение сегментов внутри единого multi-quality
+        # торрента (manifest["qualities"][i].file_start_index, см.
+        # bridge/snark/publisher.py) — сегмент N плейлиста физически
+        # является файлом с индексом start_index+N в торренте. Используется,
+        # когда ВЕСЬ плейлист — одно качество (обычный случай при первой
+        # загрузке видео). По умолчанию 0 для обратной совместимости.
+        start_index = int(request.query.get("start_index", "0"))
+        # indices_b64 — явный список АБСОЛЮТНЫХ индексов файлов, по одному
+        # на каждый сегмент плейлиста (base64 JSON-массив). Нужен для
+        # бесшовного переключения качества на середине просмотра (см.
+        # player.js:changeQuality): сегменты до текущей позиции просмотра
+        # остаются с индексами СТАРОГО качества (зритель доигрывает то, что
+        # уже начал), а начиная со следующего — с индексами НОВОГО. Один
+        # плоский start_index этого выразить не может, поэтому когда
+        # indices_b64 присутствует, он имеет приоритет над start_index.
+        indices_b64 = request.query.get("indices_b64", "")
 
         if not policy.check_stream_access(stream_tok, torrent_id):
             return web.Response(status=403, text="invalid or expired stream_token")
@@ -221,11 +261,24 @@ def create_app(policy: BridgePolicy) -> web.Application:
         except Exception:
             return web.Response(status=400, text="invalid durations_b64")
 
+        if indices_b64:
+            try:
+                indices = json.loads(base64.b64decode(indices_b64).decode())
+            except Exception:
+                return web.Response(status=400, text="invalid indices_b64")
+            if len(indices) != len(durations):
+                return web.Response(status=400, text="indices_b64/durations_b64 length mismatch")
+        else:
+            indices = [start_index + i for i in range(len(durations))]
+
         lines = ["#EXTM3U", "#EXT-X-VERSION:3", f"#EXT-X-TARGETDURATION:{int(max(durations)) + 1}",
                  "#EXT-X-PLAYLIST-TYPE:VOD"]
-        for i, dur in enumerate(durations):
+        for dur, idx in zip(durations, indices):
             lines.append(f"#EXTINF:{dur:.3f},")
-            lines.append(f"/bridge/segment?stream_token={stream_tok}&torrent_id={torrent_id}&index={i}")
+            lines.append(
+                f"/bridge/segment?stream_token={stream_tok}&torrent_id={torrent_id}"
+                f"&index={idx}"
+            )
         lines.append("#EXT-X-ENDLIST")
 
         return web.Response(text="\n".join(lines), content_type="application/vnd.apple.mpegurl")
@@ -369,6 +422,7 @@ def create_app(policy: BridgePolicy) -> web.Application:
     app.router.add_post("/bridge/pair/confirm", pair_confirm)
     app.router.add_post("/bridge/add", add_torrent)
     app.router.add_post("/bridge/seek", seek)
+    app.router.add_post("/bridge/set_quality", set_quality)
     app.router.add_get("/bridge/progress", progress)
     app.router.add_post("/bridge/remove", remove)
 

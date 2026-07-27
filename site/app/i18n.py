@@ -175,6 +175,16 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
                               "You can change this later from the Studio.",
         "publish.nsfw_no": "No",
         "publish.nsfw_yes": "Yes, this video is NSFW",
+        "publish.qualities_label": "Available qualities",
+        "publish.qualities_hint": "360p is always included as a safe baseline for slow I2P connections. "
+                                   "All selected qualities are downloaded/seeded together as one torrent — "
+                                   "viewers just switch between them instantly, no extra download.",
+        "publish.quality_360p": "360p (always included)",
+        "publish.quality_480p": "480p",
+        "publish.quality_720p": "720p",
+        "publish.quality_1080p": "1080p",
+        "publish.quality_heavy_warning": "Higher qualities take much longer to encode and download over I2P, "
+                                          "and use significantly more disk space on both your machine and viewers'.",
         "publish.button": "Publish video",
         "publish.status_publishing": "Publishing — this can take a while depending on the video length...",
         "publish.status_published": "Published! ",
@@ -192,7 +202,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "video.nojs_bridge_link": "ITubeP Bridge",
         "video.nojs_or_download": "Or download the torrent file and watch locally with any "
                                     "BitTorrent client that supports I2P:",
-        "video.download_quality": "Download {quality} (.torrent)",
+        "video.download_torrent": "Download the video torrent (all qualities, .torrent)",
+        "video.quality_label": "Quality:",
 
         "comments.heading": "Comments",
         "comments.placeholder": "Add a comment...",
@@ -210,6 +221,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "player.status_playback_error": "Playback error: ",
         "player.status_reauth": "Bridge pairing was revoked, re-confirmation required...",
         "player.status_seeking": "Seeking to segment {index}, waiting for download...",
+        "player.status_switching_quality": "Switching quality, waiting for the new segments to download...",
         "player.error_no_hls": "Browser doesn't support HLS",
         "player.error_no_torrent_fetch": "Failed to fetch .torrent from the site",
         "player.error_no_stream_token": "Failed to get a playback token",
@@ -355,6 +367,16 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
                               "Позже это можно изменить в Студии.",
         "publish.nsfw_no": "Нет",
         "publish.nsfw_yes": "Да, это видео NSFW",
+        "publish.qualities_label": "Доступные качества",
+        "publish.qualities_hint": "360p всегда включено как безопасный минимум для медленных соединений I2P. "
+                                   "Все выбранные качества скачиваются и раздаются вместе, одним торрентом — "
+                                   "зрители переключаются между ними мгновенно, без повторной докачки.",
+        "publish.quality_360p": "360p (включено всегда)",
+        "publish.quality_480p": "480p",
+        "publish.quality_720p": "720p",
+        "publish.quality_1080p": "1080p",
+        "publish.quality_heavy_warning": "Более высокие качества заметно дольше кодируются и качаются по I2P, "
+                                          "а также занимают значительно больше места на диске — и у вас, и у зрителей.",
         "publish.button": "Опубликовать видео",
         "publish.status_publishing": "Публикация — это может занять время в зависимости от длины видео...",
         "publish.status_published": "Опубликовано! ",
@@ -372,7 +394,8 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "video.nojs_bridge_link": "ITubeP Bridge",
         "video.nojs_or_download": "Либо скачайте торрент-файл и смотрите локально любым "
                                     "BitTorrent-клиентом с поддержкой I2P:",
-        "video.download_quality": "Скачать {quality} (.torrent)",
+        "video.download_torrent": "Скачать торрент видео (все качества, .torrent)",
+        "video.quality_label": "Качество:",
 
         "comments.heading": "Комментарии",
         "comments.placeholder": "Написать комментарий...",
@@ -390,6 +413,7 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "player.status_playback_error": "Ошибка воспроизведения: ",
         "player.status_reauth": "Сопряжение с мостом было отозвано, требуется повторное подтверждение...",
         "player.status_seeking": "Перемотка на сегмент {index}, ожидаю докачку...",
+        "player.status_switching_quality": "Переключаю качество, ожидаю докачку новых сегментов...",
         "player.error_no_hls": "Браузер не поддерживает HLS",
         "player.error_no_torrent_fetch": "Не удалось получить .torrent с сайта",
         "player.error_no_stream_token": "Не удалось получить токен для воспроизведения",

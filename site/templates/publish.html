@@ -27,6 +27,26 @@
                       placeholder="{{ t('publish.description_placeholder') }}"></textarea>
         </div>
         <div class="form-row">
+            <label>{{ t('publish.qualities_label') }}</label>
+            <p class="form-hint">{{ t('publish.qualities_hint') }}</p>
+            <label class="checkbox-inline">
+                <input type="checkbox" name="quality" value="360p" checked disabled>
+                {{ t('publish.quality_360p') }}
+            </label>
+            <label class="checkbox-inline">
+                <input type="checkbox" name="quality" value="480p"> {{ t('publish.quality_480p') }}
+            </label>
+            <label class="checkbox-inline">
+                <input type="checkbox" name="quality" value="720p"> {{ t('publish.quality_720p') }}
+            </label>
+            <label class="checkbox-inline">
+                <input type="checkbox" name="quality" value="1080p"> {{ t('publish.quality_1080p') }}
+            </label>
+            <p class="form-hint" id="quality-heavy-warning" style="display:none;">
+                {{ t('publish.quality_heavy_warning') }}
+            </p>
+        </div>
+        <div class="form-row">
             <label>{{ t('publish.nsfw_label') }}</label>
             <p class="form-hint">{{ t('publish.nsfw_hint') }}</p>
             <label class="radio-inline">
@@ -79,6 +99,15 @@
         const publishForm = document.getElementById("publish-form");
         const publishSubmitBtn = document.getElementById("publish-submit-btn");
         const statusEl = document.getElementById("publish-status");
+        const heavyWarningEl = document.getElementById("quality-heavy-warning");
+
+        const heavyQualityCheckboxes = Array.from(
+            publishForm.querySelectorAll('input[name="quality"]:not([disabled])')
+        );
+        function updateHeavyWarning() {
+            heavyWarningEl.style.display = heavyQualityCheckboxes.some(cb => cb.checked) ? "" : "none";
+        }
+        heavyQualityCheckboxes.forEach(cb => cb.addEventListener("change", updateHeavyWarning));
 
         function resetFileSelection() {
             publishSessionId = null;
@@ -151,6 +180,15 @@
             }
             const nsfw = nsfwInput.value === "1";
 
+            // Disabled-чекбокс 360p не участвовал бы в обычной отправке
+            // формы (браузер не включает disabled-поля в submit), но здесь
+            // мы читаем .checked напрямую через DOM, а не полагаемся на
+            // FormData — поэтому 360p корректно попадает в список, даже
+            // будучи disabled (он всегда checked=true, см. разметку выше).
+            const qualities = Array.from(
+                publishForm.querySelectorAll('input[name="quality"]')
+            ).filter(cb => cb.checked).map(cb => cb.value);
+
             publishSubmitBtn.disabled = true;
             statusEl.textContent = window.t("publish.status_publishing");
 
@@ -168,6 +206,7 @@
                         title: title,
                         description: description,
                         nsfw: nsfw,
+                        qualities: qualities,
                     }),
                 });
 

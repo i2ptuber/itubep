@@ -67,9 +67,15 @@ async function bridgeFetchAuthed(url, options, token) {
     return resp;
 }
 
-async function addVideoToBridge(token, videoId, quality, torrentName) {
+async function addVideoToBridge(token, videoId, torrentName) {
+    // Единый торрент на ВСЕ качества (см. bridge/snark/publisher.py) —
+    // добавляется в мост ровно один раз за просмотр, независимо от того,
+    // сколько раз зритель переключит качество внутри этого же сеанса
+    // просмотра (переключение качества — это смена приоритета файлов
+    // внутри уже добавленного торрента, см. changeQuality ниже, а не
+    // повторное добавление).
     const torrentResp = await fetch(
-        `${window.ITUBEP_VIDEO.site_origin}/api/video/${videoId}/chunk/${quality}.torrent`
+        `${window.ITUBEP_VIDEO.site_origin}/api/video/${videoId}/torrent`
     );
     if (!torrentResp.ok) throw new Error(window.t("player.error_no_torrent_fetch"));
 
@@ -88,6 +94,29 @@ async function addVideoToBridge(token, videoId, quality, torrentName) {
 
     if (!resp.ok) throw new Error(window.t("player.error_bridge_rejected") + await resp.text());
     return await resp.json();
+}
+
+// Сообщает мосту, что зритель выбрал другое качество — сегменты этого
+// качества (диапазон [file_start_index, file_start_index+file_count) в
+// едином торренте, см. манифест) получат приоритет high, все остальные —
+// normal (см. bridge/snark/integration.py:set_quality_priority). НЕ
+// критично для воспроизведения, если запрос не удался (то же самое
+// поведение best-effort, что и notifyBridgeSeek ниже) — сегменты всё
+// равно продолжат докачиваться, просто без форсированного приоритета.
+async function notifyBridgeQualityChange(token, torrentId, quality) {
+    try {
+        await bridgeFetchAuthed(`${BRIDGE_URL}/bridge/set_quality`, {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({
+                torrent_id: torrentId,
+                high_start: quality.file_start_index,
+                high_count: quality.file_count,
+            }),
+        }, token);
+    } catch (e) {
+        console.warn("[itubep] failed to notify bridge about quality change:", e);
+    }
 }
 
 function base64UrlSafe(str) {
@@ -125,12 +154,21 @@ async function notifyBridgeSeek(token, torrentId, targetIndex) {
     }
 }
 
+function buildPlaylistUrl(streamToken, torrentId, durations, indices) {
+    const durationsB64 = base64UrlSafe(JSON.stringify(durations));
+    const indicesB64 = base64UrlSafe(JSON.stringify(indices));
+    return `${BRIDGE_URL}/bridge/playlist?stream_token=${encodeURIComponent(streamToken)}` +
+        `&torrent_id=${torrentId}&durations_b64=${encodeURIComponent(durationsB64)}` +
+        `&indices_b64=${encodeURIComponent(indicesB64)}`;
+}
+
 async function initPlayer() {
-    const { video_id, qualities } = window.ITUBEP_VIDEO;
+    const { video_id, qualities, torrent_name } = window.ITUBEP_VIDEO;
     const statusEl = document.getElementById("player-status");
     const containerEl = document.getElementById("player-container");
     const fallbackEl = document.getElementById("nojs-fallback");
     const videoEl = document.getElementById("video-player");
+    const qualitySelectEl = document.getElementById("quality-select");
 
     if (!qualities || qualities.length === 0) {
         return; // остаёмся на no-JS fallback
@@ -141,12 +179,13 @@ async function initPlayer() {
         containerEl.style.display = "block";
         statusEl.textContent = window.t("player.status_pairing_done");
 
-        const quality = qualities[0];
-
+        // Единый торрент на ВСЕ качества (см. bridge/snark/publisher.py) —
+        // добавляется в мост один раз за весь сеанс просмотра, независимо
+        // от того, сколько раз зритель переключит качество ниже.
         let handle;
         try {
             console.log("[itubep] добавляю торрент с текущим токеном...");
-            handle = await addVideoToBridge(token, video_id, quality.label, quality.torrent_name);
+            handle = await addVideoToBridge(token, video_id, torrent_name);
         } catch (e) {
             console.warn("[itubep] addVideoToBridge упал:", e, "instanceof BridgeTokenRevokedError =", e instanceof BridgeTokenRevokedError);
             if (!(e instanceof BridgeTokenRevokedError)) throw e;
@@ -155,7 +194,7 @@ async function initPlayer() {
             token = await getOrCreateToken(/* forceNewPairing */ true);
             console.log("[itubep] новое сопряжение получено, повторяю добавление торрента...");
             statusEl.textContent = window.t("player.status_pairing_done");
-            handle = await addVideoToBridge(token, video_id, quality.label, quality.torrent_name);
+            handle = await addVideoToBridge(token, video_id, torrent_name);
         }
 
         statusEl.textContent = window.t("player.status_torrent_added");
@@ -174,13 +213,115 @@ async function initPlayer() {
         if (!streamTokenResp.ok) throw new Error(window.t("player.error_no_stream_token"));
         const { stream_token } = await streamTokenResp.json();
 
-        const durationsB64 = base64UrlSafe(JSON.stringify(quality.segment_durations));
-        const playlistUrl =
-            `${BRIDGE_URL}/bridge/playlist?stream_token=${encodeURIComponent(stream_token)}` +
-            `&torrent_id=${handle.torrent_id}&durations_b64=${encodeURIComponent(durationsB64)}`;
+        // По умолчанию — самое лёгкое качество (qualities[0], см.
+        // QUALITY_ORDER в bridge/snark/publisher.py) — самый быстрый старт
+        // воспроизведения в сети I2P; зритель может переключиться выше
+        // через селектор ниже в любой момент.
+        let currentQuality = qualities[0];
+        let hls = null;
+
+        qualitySelectEl.innerHTML = "";
+        for (const q of qualities) {
+            const opt = document.createElement("option");
+            opt.value = q.label;
+            opt.textContent = q.label;
+            qualitySelectEl.appendChild(opt);
+        }
+        qualitySelectEl.value = currentQuality.label;
+        qualitySelectEl.style.display = "";
+
+        function absoluteIndices(quality) {
+            return quality.segment_durations.map((_, i) => quality.file_start_index + i);
+        }
+
+        const playlistUrl = buildPlaylistUrl(
+            stream_token, handle.torrent_id, currentQuality.segment_durations, absoluteIndices(currentQuality),
+        );
+
+        async function changeQuality(newLabel) {
+            const newQuality = qualities.find(q => q.label === newLabel);
+            if (!newQuality || newQuality.label === currentQuality.label) return;
+
+            // Зритель НЕ должен видеть паузу/перезагрузку ради переключения
+            // качества: текущий фрагмент, который он уже смотрит, доигрывает
+            // в СТАРОМ качестве как есть, а следующие за ним — уже в новом.
+            // Поэтому вместо мгновенной подмены всего плейлиста собираем
+            // "склеенный" плейлист: сегменты [0..n] — те же индексы старого
+            // качества (это тот же самый уже отданный/докачанный контент,
+            // см. bridge/transport/http_server.py:playlist — indices_b64),
+            // а [n+1..конец] — индексы нового качества. n — номер сегмента,
+            // который сейчас воспроизводится (по currentTime).
+            const n = segmentIndexForTime(currentQuality.segment_durations, videoEl.currentTime);
+
+            const oldAbs = absoluteIndices(currentQuality);
+            const newAbs = absoluteIndices(newQuality);
+            // Общая длина плейлиста — по новому качеству (сегменты за
+            // пределами старого, если оно короче/длиннее, просто берутся
+            // из нового целиком).
+            const stitchedDurations = [];
+            const stitchedIndices = [];
+            for (let i = 0; i < newQuality.segment_durations.length; i++) {
+                if (i <= n && i < currentQuality.segment_durations.length) {
+                    stitchedDurations.push(currentQuality.segment_durations[i]);
+                    stitchedIndices.push(oldAbs[i]);
+                } else {
+                    stitchedDurations.push(newQuality.segment_durations[i]);
+                    stitchedIndices.push(newAbs[i]);
+                }
+            }
+
+            // Приоритет — только на ещё не показанный зрителю "хвост" нового
+            // качества (от n+1 до конца), а не на всё качество целиком: то,
+            // что зритель уже посмотрел (в старом качестве), торопить незачем.
+            const tailStart = newQuality.file_start_index + (n + 1);
+            const tailCount = Math.max(0, newQuality.file_count - (n + 1));
+            if (tailCount > 0) {
+                notifyBridgeQualityChange(token, handle.torrent_id, { file_start_index: tailStart, file_count: tailCount });
+            }
+
+            currentQuality = newQuality;
+            const newPlaylistUrl = buildPlaylistUrl(stream_token, handle.torrent_id, stitchedDurations, stitchedIndices);
+
+            // Сегменты до n+1 в новом плейлисте — те же самые URL
+            // (тот же index), что и были в старом, то есть уже
+            // отданы/закэшированы браузером — hls.js не должен их
+            // перекачивать заново, только продолжить с n+1 в новом
+            // качестве. Позицию/паузу всё равно восстанавливаем на всякий
+            // случай — hls.js по-прежнему делает полный reload источника.
+            const resumeAt = videoEl.currentTime;
+            const wasPaused = videoEl.paused;
+
+            statusEl.textContent = window.t("player.status_switching_quality");
+
+            if (hls) {
+                hls.once(Hls.Events.MANIFEST_PARSED, () => {
+                    videoEl.currentTime = resumeAt;
+                    if (!wasPaused) videoEl.play().catch(() => {});
+                    statusEl.textContent = "";
+                });
+                hls.loadSource(newPlaylistUrl);
+            } else {
+                // Safari (нативный HLS) — просто переставляем src и
+                // восстанавливаем позицию/состояние воспроизведения вручную.
+                videoEl.src = newPlaylistUrl;
+                videoEl.addEventListener("loadedmetadata", function onLoaded() {
+                    videoEl.removeEventListener("loadedmetadata", onLoaded);
+                    videoEl.currentTime = resumeAt;
+                    if (!wasPaused) videoEl.play().catch(() => {});
+                    statusEl.textContent = "";
+                });
+            }
+        }
+
+        qualitySelectEl.addEventListener("change", () => {
+            changeQuality(qualitySelectEl.value).catch(e => {
+                console.warn("[itubep] failed to switch quality:", e);
+                statusEl.textContent = window.t("player.status_playback_error") + e.message;
+            });
+        });
 
         if (window.Hls && Hls.isSupported()) {
-            const hls = new Hls({
+            hls = new Hls({
                 manifestLoadingTimeOut: 20000,
                 fragLoadingTimeOut: 60000, // сегменты могут ещё докачиваться через торрент
                 // Раньше было 20 попыток — этого категорически не хватает,

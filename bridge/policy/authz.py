@@ -197,6 +197,28 @@ class BridgePolicy:
 
         self.snark.set_seek_priority(handle, target_segment_index, window_ahead, window_behind)
 
+    def set_quality(
+        self, token: str, torrent_id: int, high_start: int, high_count: int,
+    ) -> None:
+        """
+        Смена качества просмотра — зритель выбрал другое качество на сайте
+        (см. player.js), сайт знает диапазон файлов этого качества внутри
+        единого торрента видео (manifest["qualities"][i].file_start_index/
+        file_count, см. snark/publisher.py) и присылает его сюда как есть.
+        Не требует confirm-диалога — это не новое разрешение, а обычное
+        действие уже авторизованного зрителя над УЖЕ добавленным (и уже
+        разрешённым через add_torrent) торрентом, тот же уровень
+        чувствительности, что и обычный seek.
+        """
+        origin = self._authenticate(token)
+        self._check_ownership(origin, torrent_id)
+
+        handle = self._handles.get(torrent_id)
+        if handle is None:
+            return  # торрент не активен в этом процессе — нечего перевешивать
+
+        self.snark.set_quality_priority(handle, high_start, high_count)
+
     def get_progress(self, token: str, torrent_id: int) -> dict:
         origin = self._authenticate(token)
         self._check_ownership(origin, torrent_id)
@@ -275,6 +297,7 @@ class BridgePolicy:
 
     def finish_publish(
         self, token: str, publish_session_id: str, title: str, description: str, nsfw: bool,
+        qualities: list[str] | None = None,
     ) -> dict:
         """
         Второй шаг: название/описание, заполненные пользователем на сайте,
@@ -285,6 +308,12 @@ class BridgePolicy:
         манифесте и без него отклонит публикацию, см. site/app/main.py:
         publish_video), мост тут её не домысливает и не подставляет
         дефолт — просто передаёт то, что реально выбрал автор.
+
+        qualities — список качеств (360p/480p/720p/1080p), отмеченных
+        автором на форме публикации сайта (см. templates/publish.html,
+        включая предупреждение о размере/времени докачки для качеств выше
+        360p) — VideoPublisher.publish сам гарантирует, что 360p попадёт в
+        список, даже если сюда пришёл пустой/None.
         """
         origin = self._authenticate(token)
 
@@ -331,6 +360,7 @@ class BridgePolicy:
                 description=description or "",
                 site_base_url=origin,  # публикуем на тот же сайт, что и запросил
                 nsfw=nsfw,
+                qualities=qualities,
                 thumbnail_path=Path(session["thumbnail_path"]) if session.get("thumbnail_path") else None,
             )
         except PublishError as e:
@@ -799,7 +829,19 @@ class BridgePolicy:
         if not self.snark.is_file_ready(torrent_id, file_index, torrent_name):
             return None
 
-        path = self.snark.get_segment_path(torrent_name, file_index)
+        # Реальное имя файла — из ответа i2psnark (см. get_progress), а не
+        # восстановленное по индексу шаблоном: имя сегмента теперь зависит
+        # от качества ("segment_NNNN_{quality}.ts", см.
+        # bridge/snark/publisher.py), и один и тот же file_index в разных
+        # видео (и даже в одном видео с несколькими качествами) относится к
+        # файлам с разными именами — гадать по индексу больше нельзя.
+        progress = self.snark.get_progress(torrent_id)
+        files = progress.get("files", [])
+        if file_index >= len(files):
+            return None
+        segment_filename = files[file_index]["name"]
+
+        path = self.snark.get_segment_path(torrent_name, segment_filename)
         if not path.exists():
             return None
         return path.read_bytes()
