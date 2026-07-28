@@ -7,7 +7,7 @@ from __future__ import annotations
 import hashlib
 import io
 import json
-from urllib.parse import quote
+from urllib.parse import quote, urljoin, urlparse
 
 from sqlalchemy import select, text, func
 from sqlalchemy.ext.asyncio import AsyncSession
@@ -959,18 +959,26 @@ def _i18n_ctx(request: Request) -> dict:
     }
 
 
-def _safe_next(next: str) -> str:
+def _is_safe_redirect_target(target: str) -> bool:
     """
-    Разрешаем редирект только на свой же сайт. `next` приходит от клиента
-    (query-параметр), поэтому не должен становиться абсолютным URL —
-    иначе /set-lang?next=http://evil.example или /set-lang?next=//evil.example
-    превращает эти эндпоинты в open redirect на чужой домен.
-    Требуем локальный путь: начинается с одного "/", не с "//" или "/\\"
-    (последнее некоторые браузеры тоже трактуют как protocol-relative).
+    Проверка на open redirect (CWE-601) для эндпоинтов вида /set-lang и
+    /set-nsfw, куда клиент передаёт `next` — URL, на который вернуться
+    после переключения. `next` приходит от клиента, поэтому не должен
+    позволять увести редирект на чужой домен (next=http://evil.example
+    или next=//evil.example).
+
+    Используем канонический паттерн (urljoin + сравнение netloc через
+    urlparse) — тот же, что в рецепте Flask и в документации CodeQL для
+    py/url-redirection, а не самодельную проверку префикса: только он
+    надёжно распознаётся статическим анализом как барьер, гарантирующий,
+    что итоговый URL остаётся на этом же origin.
     """
-    if next.startswith("/") and not next.startswith("//") and not next.startswith("/\\"):
-        return next
-    return "/"
+    if not target:
+        return False
+    base = SITE_ORIGIN or "http://localhost"
+    ref_url = urlparse(base)
+    test_url = urlparse(urljoin(base + "/", target))
+    return test_url.scheme in ("http", "https") and test_url.netloc == ref_url.netloc
 
 
 @app.get("/set-lang")
@@ -983,7 +991,8 @@ async def set_lang(request: Request, lang: str, next: str = "/"):
     """
     if lang not in SUPPORTED_LANGUAGES:
         lang = DEFAULT_LANGUAGE
-    response = RedirectResponse(url=_safe_next(next))
+    safe_next = next if _is_safe_redirect_target(next) else "/"
+    response = RedirectResponse(url=safe_next)
     response.set_cookie(COOKIE_NAME, lang, max_age=60 * 60 * 24 * 365, samesite="lax")
     return response
 
@@ -999,7 +1008,8 @@ async def set_nsfw(request: Request, show: str, next: str = "/"):
     источник истины для значения — мост, а не сам сайт (сайт в принципе не
     знает "кто" сейчас смотрит, поэтому не может решить это сам).
     """
-    response = RedirectResponse(url=_safe_next(next))
+    safe_next = next if _is_safe_redirect_target(next) else "/"
+    response = RedirectResponse(url=safe_next)
     response.set_cookie(
         NSFW_COOKIE_NAME, "1" if show == "1" else "0",
         max_age=60 * 60 * 24 * 365, samesite="lax",
