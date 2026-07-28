@@ -1,13 +1,13 @@
 {
-  "version": "0.1.5",
-  "changelog_short": "maybe release with autoupdate???",
-  "changelog_url": "https://github.com/i2ptuber/itubep/releases/tag/v0.1.5",
-  "min_supported_version": "0.1.5",
+  "version": "0.2",
+  "changelog_short": "please work 🙏",
+  "changelog_url": "https://github.com/i2ptuber/itubep/releases/tag/v0.2",
+  "min_supported_version": "0.2",
   "artifacts": {
     "clearnet": {
       "linux": {
-        "url": "https://github.com/i2ptuber/itubep/releases/download/v0.1.5/itubep-bridge-linux-v0.1.5.tar.gz",
-        "sha256": "f70393d82cb39ccb565fc2e1ddf9d67b324508a5e2d47cf4ec286074468c499f"
+        "url": "https://github.com/i2ptuber/itubep/releases/download/v0.2/itubep-bridge-linux-v0.2.tar.gz",
+        "sha256": "88429b66097f09c45b6f0647156af633cc714b4a17d8837e61edbd45ad081dfb"
       }
     },
     "i2p": {
