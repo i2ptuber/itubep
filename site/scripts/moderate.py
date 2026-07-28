@@ -7,10 +7,9 @@ FastAPI-процесс) — никакого HTTP-эндпоинта, никак
 отдельным секретом, который можно потерять/перехватить/забрутфорсить по
 сети.
 
-Soft-delete/бан, не физическое удаление строк — video_id/channel_id
-детерминированно выводятся из содержимого/ключа автора, при жёстком
-удалении тот же человек мог бы просто переопубликовать то же самое заново
-(см. комментарии у полей removed/banned в app/models.py).
+Вся логика (поиск/список/удаление/бан) — в app/moderation_service.py,
+её же использует веб-админка (admin/app.py), чтобы не держать два разных
+SQL под одно и то же действие.
 
 Использование:
     cd site
@@ -38,38 +37,29 @@ from __future__ import annotations
 import argparse
 import asyncio
 import sys
-from datetime import datetime
 from pathlib import Path
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from sqlalchemy import select  # noqa: E402
-
 from app.database import async_session  # noqa: E402
-from app.models import Channel, Video  # noqa: E402
+from app import moderation_service as svc  # noqa: E402
 
 
 async def cmd_list_videos(args) -> None:
     async with async_session() as db:
-        stmt = select(Video, Channel.display_name, Channel.banned).join(
-            Channel, Video.channel_id == Channel.channel_id
+        rows = await svc.list_videos(
+            db, query=args.query, limit=args.limit, status=args.status
         )
-        if not args.include_removed:
-            stmt = stmt.where(Video.removed == False)  # noqa: E712
-        if args.query:
-            stmt = stmt.where(Video.title.ilike(f"%{args.query}%"))
-        stmt = stmt.order_by(Video.published_at.desc()).limit(args.limit)
-
-        rows = (await db.execute(stmt)).all()
         if not rows:
             print("Ничего не найдено.")
             return
 
-        for v, channel_name, channel_banned in rows:
-            status = "УДАЛЕНО" if v.removed else ("канал заблокирован" if channel_banned else "ок")
+        for row in rows:
+            v = row.video
+            status = "УДАЛЕНО" if v.removed else ("канал заблокирован" if row.channel_banned else "ок")
             print(f"{v.video_id}  [{status}]")
             print(f"  название:  {v.title}")
-            print(f"  канал:     {channel_name} ({v.channel_id})")
+            print(f"  канал:     {row.channel_name} ({v.channel_id})")
             print(f"  скачивания: {v.download_count}   опубликовано: {v.published_at}")
             if v.removed and v.removed_reason:
                 print(f"  причина удаления: {v.removed_reason}")
@@ -78,14 +68,9 @@ async def cmd_list_videos(args) -> None:
 
 async def cmd_list_channels(args) -> None:
     async with async_session() as db:
-        stmt = select(Channel)
-        if not args.include_banned:
-            stmt = stmt.where(Channel.banned == False)  # noqa: E712
-        if args.query:
-            stmt = stmt.where(Channel.display_name.ilike(f"%{args.query}%"))
-        stmt = stmt.order_by(Channel.updated_at.desc()).limit(args.limit)
-
-        channels = (await db.execute(stmt)).scalars().all()
+        channels = await svc.list_channels(
+            db, query=args.query, limit=args.limit, status=args.status
+        )
         if not channels:
             print("Ничего не найдено.")
             return
@@ -101,37 +86,30 @@ async def cmd_list_channels(args) -> None:
 
 async def cmd_remove_video(args) -> None:
     async with async_session() as db:
-        video = await db.get(Video, args.video_id)
-        if video is None:
-            print(f"Видео {args.video_id} не найдено.", file=sys.stderr)
+        try:
+            video = await svc.remove_video(db, args.video_id, reason=args.reason)
+        except svc.NotFound as e:
+            print(str(e), file=sys.stderr)
             sys.exit(1)
-
-        video.removed = True
-        video.removed_reason = args.reason
-        video.removed_at = datetime.utcnow()
-        await db.commit()
         print(f"Видео {args.video_id} ({video.title!r}) удалено.")
 
 
 async def cmd_restore_video(args) -> None:
     async with async_session() as db:
-        video = await db.get(Video, args.video_id)
-        if video is None:
-            print(f"Видео {args.video_id} не найдено.", file=sys.stderr)
+        try:
+            video = await svc.restore_video(db, args.video_id)
+        except svc.NotFound as e:
+            print(str(e), file=sys.stderr)
             sys.exit(1)
-
-        video.removed = False
-        video.removed_reason = ""
-        video.removed_at = None
-        await db.commit()
         print(f"Видео {args.video_id} ({video.title!r}) восстановлено.")
 
 
 async def cmd_ban_channel(args) -> None:
     async with async_session() as db:
-        channel = await db.get(Channel, args.channel_id)
-        if channel is None:
-            print(f"Канал {args.channel_id} не найден.", file=sys.stderr)
+        try:
+            channel = await svc.get_channel_or_404(db, args.channel_id)
+        except svc.NotFound as e:
+            print(str(e), file=sys.stderr)
             sys.exit(1)
 
         confirm = input(
@@ -142,40 +120,64 @@ async def cmd_ban_channel(args) -> None:
             print("Отменено.")
             return
 
-        now = datetime.utcnow()
-        channel.banned = True
-        channel.banned_reason = args.reason
-        channel.banned_at = now
-
-        result = await db.execute(
-            select(Video).where(Video.channel_id == args.channel_id, Video.removed == False)  # noqa: E712
-        )
-        videos = result.scalars().all()
-        for video in videos:
-            video.removed = True
-            video.removed_reason = f"канал заблокирован: {args.reason}" if args.reason else "канал заблокирован"
-            video.removed_at = now
-
-        await db.commit()
-        print(f"Канал {args.channel_id} заблокирован, скрыто видео: {len(videos)}.")
+        channel, hidden_count = await svc.ban_channel(db, args.channel_id, reason=args.reason)
+        print(f"Канал {args.channel_id} заблокирован, скрыто видео: {hidden_count}.")
 
 
 async def cmd_unban_channel(args) -> None:
     async with async_session() as db:
-        channel = await db.get(Channel, args.channel_id)
-        if channel is None:
-            print(f"Канал {args.channel_id} не найден.", file=sys.stderr)
+        try:
+            await svc.unban_channel(db, args.channel_id)
+        except svc.NotFound as e:
+            print(str(e), file=sys.stderr)
             sys.exit(1)
-
-        channel.banned = False
-        channel.banned_reason = ""
-        channel.banned_at = None
-        await db.commit()
         print(
             f"Канал {args.channel_id} разблокирован. "
             f"Видео, скрытые вместе с блокировкой, НЕ восстановлены автоматически — "
             f"используйте 'restore-video <video_id>' по каждому нужному видео."
         )
+
+
+async def cmd_purge_video(args) -> None:
+    async with async_session() as db:
+        try:
+            video = await svc.get_video_or_404(db, args.video_id)
+        except svc.NotFound as e:
+            print(str(e), file=sys.stderr)
+            sys.exit(1)
+
+        confirm = input(
+            f"НЕОБРАТИМО стереть содержимое видео {video.title!r} ({args.video_id})? "
+            f"Торрент, превью, манифест, описание, комментарии и реакции будут удалены. "
+            f"Строка video_id останется заблокированной. [y/N] "
+        )
+        if confirm.strip().lower() != "y":
+            print("Отменено.")
+            return
+
+        title = await svc.purge_video(db, args.video_id)
+        print(f"Видео {args.video_id} ({title!r}) стёрто.")
+
+
+async def cmd_purge_channel(args) -> None:
+    async with async_session() as db:
+        try:
+            channel = await svc.get_channel_or_404(db, args.channel_id)
+        except svc.NotFound as e:
+            print(str(e), file=sys.stderr)
+            sys.exit(1)
+
+        confirm = input(
+            f"НЕОБРАТИМО стереть канал {channel.display_name!r} ({args.channel_id}) и все его видео? "
+            f"Канал будет забанен, весь тяжёлый контент удалён. "
+            f"Строки channel_id/video_id останутся заблокированными. [y/N] "
+        )
+        if confirm.strip().lower() != "y":
+            print("Отменено.")
+            return
+
+        name, count = await svc.purge_channel(db, args.channel_id)
+        print(f"Канал {args.channel_id} ({name!r}) стёрт, вместе с {count} видео.")
 
 
 def build_parser() -> argparse.ArgumentParser:
@@ -185,13 +187,19 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("list-videos", help="Список видео")
     p.add_argument("--query", default="", help="Фильтр по названию (подстрока)")
     p.add_argument("--limit", type=int, default=50)
-    p.add_argument("--include-removed", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument(
+        "--status", choices=["all", "active", "removed_only"], default="all",
+        help="all — все, active — только неудалённые, removed_only — только удалённые",
+    )
     p.set_defaults(func=cmd_list_videos)
 
     p = sub.add_parser("list-channels", help="Список каналов")
-    p.add_argument("--query", default="", help="Фильтр по названию (подстрока)")
+    p.add_argument("--query", default="", help="Фильтр по имени (подстрока)")
     p.add_argument("--limit", type=int, default=50)
-    p.add_argument("--include-banned", action=argparse.BooleanOptionalAction, default=True)
+    p.add_argument(
+        "--status", choices=["all", "active", "banned_only"], default="all",
+        help="all — все, active — только не забаненные, banned_only — только забаненные",
+    )
     p.set_defaults(func=cmd_list_channels)
 
     p = sub.add_parser("remove-video", help="Удалить (скрыть) видео")
@@ -211,6 +219,22 @@ def build_parser() -> argparse.ArgumentParser:
     p = sub.add_parser("unban-channel", help="Разблокировать канал (видео нужно восстанавливать отдельно)")
     p.add_argument("channel_id")
     p.set_defaults(func=cmd_unban_channel)
+
+    p = sub.add_parser(
+        "purge-video",
+        help="Стереть тяжёлый контент видео (торрент/превью/манифест/описание) НАВСЕГДА. "
+        "Строка video_id остаётся заблокированной — иначе видео можно переопубликовать байт-в-байт.",
+    )
+    p.add_argument("video_id")
+    p.set_defaults(func=cmd_purge_video)
+
+    p = sub.add_parser(
+        "purge-channel",
+        help="Забанить канал и стереть весь тяжёлый контент его видео + его комментарии/реакции НАВСЕГДА. "
+        "Строки channel_id/video_id остаются заблокированными — иначе канал можно перерегистрировать тем же ключом.",
+    )
+    p.add_argument("channel_id")
+    p.set_defaults(func=cmd_purge_channel)
 
     return parser
 

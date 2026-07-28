@@ -1,0 +1,20 @@
+<!DOCTYPE html>
+<html lang="ru">
+<head>
+    <meta charset="utf-8">
+    <title>{% block title %}ITubeP — модерация{% endblock %}</title>
+    <link rel="stylesheet" href="/static/admin.css">
+</head>
+<body>
+    <header class="topbar">
+        <span class="logo">ITubeP · модерация</span>
+        <nav>
+            <a href="/videos">Видео</a>
+            <a href="/channels">Каналы</a>
+        </nav>
+    </header>
+    <main>
+        {% block content %}{% endblock %}
+    </main>
+</body>
+</html>

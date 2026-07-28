@@ -1,0 +1,54 @@
+* { box-sizing: border-box; }
+body {
+    background: #121212; color: #eee;
+    font-family: -apple-system, Segoe UI, Roboto, sans-serif;
+    margin: 0;
+}
+.topbar {
+    background: #1a1a1a; padding: 12px 24px;
+    display: flex; align-items: center; gap: 24px;
+    border-bottom: 1px solid #2a2a2a;
+}
+.logo { color: #ff9800; font-weight: bold; }
+.topbar nav a { color: #ccc; text-decoration: none; margin-right: 16px; }
+.topbar nav a:hover { color: #ff9800; }
+main { padding: 24px 32px; max-width: 1200px; margin: 0 auto; }
+
+.toolbar { display: flex; gap: 10px; margin-bottom: 18px; align-items: center; flex-wrap: wrap; }
+.toolbar input[type="text"] {
+    padding: 8px 10px; border-radius: 4px; border: 1px solid #333;
+    background: #1e1e1e; color: #eee; min-width: 260px;
+}
+.toolbar button, .btn {
+    padding: 7px 14px; border-radius: 4px; border: none;
+    background: #ff9800; color: #111; cursor: pointer; font-weight: bold;
+}
+.btn-secondary { background: #333; color: #eee; }
+.btn-danger { background: #c0392b; color: #fff; }
+.toolbar label { color: #aaa; font-size: 0.9em; }
+.count { color: #888; margin-bottom: 12px; font-size: 0.9em; }
+
+table { width: 100%; border-collapse: collapse; table-layout: fixed; }
+th, td { text-align: left; padding: 10px 8px; border-bottom: 1px solid #2a2a2a; vertical-align: top; overflow-wrap: break-word; }
+th { color: #999; font-weight: normal; font-size: 0.85em; text-transform: uppercase; }
+tr:hover td { background: #191919; }
+
+.toolbar select {
+    padding: 7px 10px; border-radius: 4px; border: 1px solid #333;
+    background: #1e1e1e; color: #eee;
+}
+
+.status-ok { color: #4caf50; }
+.status-removed { color: #e57373; }
+.status-banned { color: #ffb74d; }
+.mono { font-family: monospace; font-size: 0.85em; color: #999; word-break: break-all; }
+.reason { color: #999; font-size: 0.85em; }
+
+.row-actions { display: flex; gap: 6px; flex-wrap: wrap; }
+.row-actions form, .row-actions a { flex: 0 0 auto; }
+.row-actions .btn, .row-actions button { white-space: nowrap; }
+.btn-purge { background: #4a1414; color: #ff8a80; border: 1px solid #7a2020; }
+
+.pagination { margin-top: 20px; display: flex; gap: 10px; align-items: center; }
+.pagination a { color: #ff9800; text-decoration: none; }
+.empty-state { color: #888; padding: 40px 0; text-align: center; }

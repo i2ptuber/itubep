@@ -1,0 +1,97 @@
+{% extends "base.html" %}
+{% block title %}Видео — модерация{% endblock %}
+{% block content %}
+<form class="toolbar" method="get" action="/videos">
+    <input type="text" name="q" value="{{ q }}" placeholder="Поиск по названию видео…">
+    <input type="hidden" name="channel_id" value="{{ channel_id }}">
+    <select name="status">
+        <option value="all" {% if status == "all" %}selected{% endif %}>все</option>
+        <option value="active" {% if status == "active" %}selected{% endif %}>только активные</option>
+        <option value="removed_only" {% if status == "removed_only" %}selected{% endif %}>только удалённые</option>
+    </select>
+    <button type="submit">Найти</button>
+    {% if channel_id %}<a class="btn btn-secondary" href="/videos">✕ сбросить фильтр по каналу</a>{% endif %}
+</form>
+
+<div class="count">Всего найдено: {{ total }}</div>
+
+{% if not rows %}
+<div class="empty-state">Ничего не найдено.</div>
+{% else %}
+<table>
+    <colgroup>
+        <col style="width: 38%">
+        <col style="width: 22%">
+        <col style="width: 12%">
+        <col style="width: 12%">
+        <col style="width: 8%">
+        <col style="width: 8%">
+    </colgroup>
+    <thead>
+        <tr>
+            <th>Название</th>
+            <th>Канал</th>
+            <th>Статус</th>
+            <th>Опубликовано</th>
+            <th>Скачивания</th>
+            <th>Действия</th>
+        </tr>
+    </thead>
+    <tbody>
+        {% for row in rows %}
+        {% set v = row.video %}
+        <tr>
+            <td>
+                {{ v.title }}<br>
+                <span class="mono">{{ v.video_id }}</span>
+                {% if v.removed and v.removed_reason %}<div class="reason">причина: {{ v.removed_reason }}</div>{% endif %}
+            </td>
+            <td>
+                {{ row.channel_name }}<br>
+                <span class="mono">{{ v.channel_id }}</span>
+            </td>
+            <td>
+                {% if v.removed %}<span class="status-removed">удалено</span>
+                {% elif row.channel_banned %}<span class="status-banned">канал заблокирован</span>
+                {% else %}<span class="status-ok">ок</span>{% endif %}
+            </td>
+            <td>{{ v.published_at.strftime("%Y-%m-%d %H:%M") }}</td>
+            <td>{{ v.download_count }}</td>
+            <td>
+                <div class="row-actions">
+                    {% if v.removed %}
+                    <form method="post" action="/videos/{{ v.video_id }}/restore">
+                        <input type="hidden" name="q" value="{{ q }}">
+                        <input type="hidden" name="page" value="{{ page }}">
+                        <input type="hidden" name="status" value="{{ status }}">
+                        <button class="btn btn-secondary" type="submit">Восстановить</button>
+                    </form>
+                    {% else %}
+                    <form method="post" action="/videos/{{ v.video_id }}/remove" onsubmit="return confirm('Удалить видео {{ v.title|replace("'", "") }}?');">
+                        <input type="hidden" name="q" value="{{ q }}">
+                        <input type="hidden" name="page" value="{{ page }}">
+                        <input type="hidden" name="status" value="{{ status }}">
+                        <input type="hidden" name="reason" value="удалено модератором">
+                        <button class="btn btn-danger" type="submit">Удалить</button>
+                    </form>
+                    {% endif %}
+                    <form method="post" action="/videos/{{ v.video_id }}/purge" onsubmit="return confirm('НЕОБРАТИМО стереть содержимое видео {{ v.title|replace("'", "") }}? Торрент, превью, описание, комментарии и реакции будут удалены навсегда.');">
+                        <input type="hidden" name="q" value="{{ q }}">
+                        <input type="hidden" name="page" value="{{ page }}">
+                        <input type="hidden" name="status" value="{{ status }}">
+                        <button class="btn btn-purge" type="submit">Стереть</button>
+                    </form>
+                </div>
+            </td>
+        </tr>
+        {% endfor %}
+    </tbody>
+</table>
+
+<div class="pagination">
+    {% if page > 1 %}<a href="/videos?q={{ q }}&page={{ page - 1 }}&status={{ status }}&channel_id={{ channel_id }}">← назад</a>{% endif %}
+    <span>стр. {{ page }} из {{ total_pages }}</span>
+    {% if page < total_pages %}<a href="/videos?q={{ q }}&page={{ page + 1 }}&status={{ status }}&channel_id={{ channel_id }}">вперёд →</a>{% endif %}
+</div>
+{% endif %}
+{% endblock %}
