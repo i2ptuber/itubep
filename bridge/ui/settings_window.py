@@ -258,6 +258,13 @@ def main():
 
     def on_update_channel_change():
         storage.set_setting("update_channel", update_channel_var.get())
+        # Результат предыдущей проверки относится к другому каналу — прячем
+        # кнопку "Скачать" и просим проверить заново, чтобы не оставлять
+        # устаревшую (для другого канала) информацию видимой в UI.
+        _last_update_info["value"] = None
+        _last_update_info["channel"] = None
+        download_button.pack_forget()
+        update_status_var.set("")
 
     channel_row = ttk.Frame(frame)
     channel_row.pack(anchor="w")
@@ -285,14 +292,23 @@ def main():
     # download_button.pack() вызывается только когда есть что скачивать —
     # см. _on_check_done ниже.
 
-    _last_update_info = {"value": None}
+    _last_update_info = {"value": None, "channel": None}
 
-    def _on_check_done(info=None, error=None):
+    def _on_check_done(info=None, error=None, channel=None):
         check_button.state(["!disabled"])
         if error is not None:
             update_status_var.set(t("settings.update_error") % str(error))
             return
+        # Запоминаем канал, с которым реально была сделана проверка (и
+        # получен info.download_url), а не читаем его заново из
+        # update_channel_var — пользователь мог успеть переключить радио-
+        # кнопку между "Check for updates" и "Download" (например, сначала
+        # проверить через i2p, потом переключиться на clearnet и нажать
+        # Download) — тогда download_url всё ещё вёл бы на .i2p-адрес, а
+        # сессия для скачивания создавалась бы уже под clearnet (без
+        # прокси), и запрос на .i2p-хост уходил бы напрямую, в обход I2P.
         _last_update_info["value"] = info
+        _last_update_info["channel"] = channel
         if info.is_newer:
             status = t("settings.update_available") % info.version
             if info.changelog_short:
@@ -308,12 +324,14 @@ def main():
         update_status_var.set(t("settings.update_checking"))
         download_button.pack_forget()
 
+        checked_channel = update_channel_var.get()
+
         def worker():
             try:
-                info = updater.check_for_updates(storage, channel=update_channel_var.get())
-                root.after(0, lambda info=info: _on_check_done(info=info))
+                info = updater.check_for_updates(storage, channel=checked_channel)
+                root.after(0, lambda info=info: _on_check_done(info=info, channel=checked_channel))
             except Exception as e:
-                root.after(0, lambda e=e: _on_check_done(error=e))
+                root.after(0, lambda e=e: _on_check_done(error=e, channel=checked_channel))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -321,7 +339,8 @@ def main():
 
     def on_download_update():
         info = _last_update_info["value"]
-        if info is None:
+        download_channel = _last_update_info["channel"]
+        if info is None or download_channel is None:
             return
         download_button.state(["disabled"])
         update_status_var.set(t("settings.update_downloading"))
@@ -331,7 +350,12 @@ def main():
                 dest_dir = Path.home() / "Downloads"
                 if not dest_dir.exists():
                     dest_dir = Path.home()
-                path = updater.download_update(info, dest_dir, storage, channel=update_channel_var.get())
+                # channel фиксирован тем, что было при проверке (см.
+                # _on_check_done) — намеренно НЕ update_channel_var.get(),
+                # иначе при переключении радиокнопки между проверкой и
+                # скачиванием запрос уйдёт не туда (см. баг с i2p-адресом
+                # напрямую без прокси).
+                path = updater.download_update(info, dest_dir, storage, channel=download_channel)
                 root.after(0, lambda path=path: _on_download_done(path=path))
             except Exception as e:
                 root.after(0, lambda e=e: _on_download_done(error=e))

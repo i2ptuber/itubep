@@ -176,9 +176,17 @@ def main():
 
         print(f"  Загружаю {path.name} ({platform_key})...")
         asset = upload_asset(session, token, release_id, path)
-        download_url = asset.get("browser_download_url") or (
-            f"{GITEA_BASE}/{GITEA_OWNER}/{GITEA_REPO}/releases/download/{args.tag}/{path.name}"
-        )
+        # ВАЖНО: не доверяем "browser_download_url" из ответа Gitea — на
+        # git.community.i2p это поле возвращается в неправильном виде
+        # (API-ссылка на метаданные ассета вида
+        # ".../api/repos/.../releases/<id>/assets/<id>", без "/v1/"), а не
+        # публичная ссылка на скачивание файла. Такая ссылка отдаёт 404,
+        # если её попытаться просто скачать через GET (см. баг с 404 при
+        # скачивании обновления через i2p-канал). Поэтому всегда строим
+        # публичную download-ссылку сами по известному стабильному шаблону
+        # Gitea — она не зависит от того, что именно вернул конкретный
+        # инстанс в JSON.
+        download_url = f"{GITEA_BASE}/{GITEA_OWNER}/{GITEA_REPO}/releases/download/{args.tag}/{path.name}"
         i2p_section[platform_key] = {"url": download_url, "sha256": local_sha256}
         print(f"    -> {download_url}")
         print(f"    -> sha256: {local_sha256}")
