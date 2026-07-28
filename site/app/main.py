@@ -1008,7 +1008,8 @@ async def home_page(request: Request, q: str = "", session: AsyncSession = Depen
         # Тот же дорогой ts_vector-запрос, что и /api/search — тот же бюджет.
         enforce("search")
         sql = text("""
-            SELECT DISTINCT v.video_id, v.title, c.display_name AS channel_display_name,
+            SELECT DISTINCT v.video_id, v.title,
+                   COALESCE(NULLIF(c.site_display_name, ''), c.display_name) AS channel_display_name,
                    v.duration_seconds, v.thumbnail IS NOT NULL AS has_thumbnail, v.nsfw,
                    ts_rank(
                        to_tsvector('simple', v.title || ' ' || v.description || ' ' || c.display_name),
@@ -1034,7 +1035,9 @@ async def home_page(request: Request, q: str = "", session: AsyncSession = Depen
         enforce("home_feed")
 
         recent_sql = text("""
-            SELECT v.video_id, v.title, c.display_name AS channel_display_name, v.duration_seconds,
+            SELECT v.video_id, v.title,
+                   COALESCE(NULLIF(c.site_display_name, ''), c.display_name) AS channel_display_name,
+                   v.duration_seconds,
                    v.thumbnail IS NOT NULL AS has_thumbnail, v.nsfw
             FROM videos v
             JOIN channels c ON v.channel_id = c.channel_id
@@ -1052,7 +1055,9 @@ async def home_page(request: Request, q: str = "", session: AsyncSession = Depen
         # отдельной инфраструктуры для сэмплирования; берём с запасом на
         # длину recent_ids, чтобы после фильтрации осталось 16.
         random_sql = text("""
-            SELECT v.video_id, v.title, c.display_name AS channel_display_name, v.duration_seconds,
+            SELECT v.video_id, v.title,
+                   COALESCE(NULLIF(c.site_display_name, ''), c.display_name) AS channel_display_name,
+                   v.duration_seconds,
                    v.thumbnail IS NOT NULL AS has_thumbnail, v.nsfw
             FROM videos v
             JOIN channels c ON v.channel_id = c.channel_id
