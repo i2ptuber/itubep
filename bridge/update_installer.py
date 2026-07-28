@@ -135,7 +135,52 @@ def _find_new_bridge_root(extracted_dir: Path) -> Path:
     return matches[0].parent.parent
 
 
-def build_apply_script(new_repo_root: Path, old_repo_root: Path, ctl_script: Path) -> str:
+_SCRIPT_MSG_RU = {
+    "title": "=== ITubeP: установка обновления ===",
+    "current_version": "Текущая версия:    %s",
+    "new_version": "Новая версия из:   %s",
+    "stopping": "--- Останавливаю мост и i2psnark перед обновлением ---",
+    "ctl_missing": "--- itubep-ctl не найден (%s) — пропускаю остановку сервисов ---",
+    "backing_up": "--- Делаю резервную копию текущей версии ---",
+    "backup_failed": "ОШИБКА: не удалось создать резервную копию (%s -> %s).",
+    "backup_failed_note": "Обновление остановлено, старая версия НЕ тронута.",
+    "moving_new": "--- Сливаю новую версию поверх старой (файлы, которых нет в новой версии, не трогаются) ---",
+    "move_failed": "ОШИБКА: не удалось слить новую версию на место (%s).",
+    "rolling_back": "Откатываюсь на резервную копию...",
+    "old_restored": "Старая версия восстановлена и перезапущена.",
+    "running_install": "--- Запускаю install.sh новой версии (может спросить пароль sudo) ---",
+    "success": "=== Обновление установлено успешно ===",
+    "backup_removed": "(резервная копия %s удалена)",
+    "install_failed": "=== install.sh завершился с ошибкой — откатываюсь на предыдущую версию ===",
+    "old_restored_note": "Старая версия восстановлена и перезапущена. Ничего не потеряно.",
+    "report_bug": "Сообщите об ошибке выше разработчику (это не должно происходить).",
+    "press_enter": "Нажмите Enter, чтобы закрыть это окно...",
+}
+
+_SCRIPT_MSG_EN = {
+    "title": "=== ITubeP: installing update ===",
+    "current_version": "Current version:   %s",
+    "new_version": "New version from:  %s",
+    "stopping": "--- Stopping the bridge and i2psnark before updating ---",
+    "ctl_missing": "--- itubep-ctl not found (%s) — skipping service shutdown ---",
+    "backing_up": "--- Backing up the current version ---",
+    "backup_failed": "ERROR: could not create a backup (%s -> %s).",
+    "backup_failed_note": "Update stopped, the old version was NOT touched.",
+    "moving_new": "--- Merging the new version into place (files not present in the new version are left untouched) ---",
+    "move_failed": "ERROR: could not merge the new version into place (%s).",
+    "rolling_back": "Rolling back to the backup...",
+    "old_restored": "Old version restored and restarted.",
+    "running_install": "--- Running the new version's install.sh (may ask for your sudo password) ---",
+    "success": "=== Update installed successfully ===",
+    "backup_removed": "(backup %s removed)",
+    "install_failed": "=== install.sh failed — rolling back to the previous version ===",
+    "old_restored_note": "Old version restored and restarted. Nothing was lost.",
+    "report_bug": "Please report the error above to the developer (this shouldn't happen).",
+    "press_enter": "Press Enter to close this window...",
+}
+
+
+def build_apply_script(new_repo_root: Path, old_repo_root: Path, ctl_script: Path, lang: str = "en") -> str:
     """
     Генерирует bash-скрипт, который реально проводит обновление — для
     запуска в отдельном терминале (см. docstring модуля выше, почему не в
@@ -143,11 +188,19 @@ def build_apply_script(new_repo_root: Path, old_repo_root: Path, ctl_script: Pat
       1) останавливает мост/i2psnark через itubep-ctl, если он вообще
          существует (на самой первой установке, до install.sh, его ещё
          может не быть — это не ошибка);
-      2) переносит текущий репозиторий в бэкап рядом (на случай отката);
-      3) переносит распакованную новую версию на место старой — ВАЖНО:
-         ровно по тому же пути old_repo_root, что и раньше, потому что на
-         этот путь ссылаются уже сгенерированные itubep-ctl и
-         systemd-юниты (см. install.sh, BRIDGE_DIR);
+      2) делает полную копию текущего репозитория в бэкап рядом (на случай
+         отката) — именно копию, а не перемещение: старая версия остаётся
+         на месте (по тому же пути old_repo_root, на который уже ссылаются
+         сгенерированные itubep-ctl и systemd-юниты), пока идёт следующий шаг;
+      3) СЛИВАЕТ (merge) распакованную новую версию поверх старой по тому
+         же пути old_repo_root — копирует файлы новой версии поверх
+         старых, ДОБАВЛЯЕТ новые файлы, но НЕ удаляет из old_repo_root
+         ничего, чего нет в новой версии (пользовательские данные,
+         .git и т.п. остаются нетронутыми). Раньше здесь было полное
+         перемещение (mv) нового дерева на место старого, что стирало
+         старую директорию целиком и оставляло только то, что реально
+         входило в архив обновления — это и есть баг, который эта
+         функция чинит;
       4) заново прогоняет install.sh новой версии — он идемпотентен, не
          трогает уже накопленные пользовательские данные (i2psnark config,
          venv переиспользуется/обновляется) и сам перегенерирует
@@ -157,16 +210,31 @@ def build_apply_script(new_repo_root: Path, old_repo_root: Path, ctl_script: Pat
          мост не остался в нерабочем состоянии посреди обновления.
     Каждый шаг echo'ится в терминал — процесс виден целиком, ничего не
     происходит молча.
+
+    lang — язык интерфейса моста (см. i18n.get_language(storage)), а НЕ
+    системная локаль install.sh — этот скрипт запускается по клику из
+    settings_window.py, поэтому должен говорить на том же языке, что и
+    остальной интерфейс настроек, а не на языке, который install.sh сам
+    определил бы заново по $LANG/$LC_ALL терминала (может отличаться).
     """
+    m = _SCRIPT_MSG_RU if lang == "ru" else _SCRIPT_MSG_EN
+
     new_repo_root_q = shlex.quote(str(new_repo_root))
     old_repo_root_q = shlex.quote(str(old_repo_root))
     ctl_q = shlex.quote(str(ctl_script))
     backup_dir_q = shlex.quote(f"{old_repo_root}.backup-{int(time.time())}")
 
+    header_comment = (
+        "# Автосгенерировано update_installer.py — можно смотреть, но не нужно\n"
+        "# редактировать вручную, файл перезаписывается при каждой попытке\n"
+        "# установки обновления."
+        if lang == "ru" else
+        "# Auto-generated by update_installer.py — safe to look at, but don't\n"
+        "# edit by hand, this file gets overwritten on every install attempt."
+    )
+
     return f"""#!/usr/bin/env bash
-# Автосгенерировано update_installer.py — можно смотреть, но не нужно
-# редактировать вручную, файл перезаписывается при каждой попытке
-# установки обновления.
+{header_comment}
 set -uo pipefail
 
 CTL={ctl_q}
@@ -174,63 +242,75 @@ OLD_ROOT={old_repo_root_q}
 NEW_ROOT={new_repo_root_q}
 BACKUP_DIR={backup_dir_q}
 
-echo "=== ITubeP: установка обновления ==="
-echo "Текущая версия:    $OLD_ROOT"
-echo "Новая версия из:   $NEW_ROOT"
+echo {shlex.quote(m["title"])}
+printf {shlex.quote(m["current_version"] + "\\n")} "$OLD_ROOT"
+printf {shlex.quote(m["new_version"] + "\\n")} "$NEW_ROOT"
 echo ""
 
 if [ -x "$CTL" ]; then
-    echo "--- Останавливаю мост и i2psnark перед обновлением ---"
+    echo {shlex.quote(m["stopping"])}
     "$CTL" stop-all || true
 else
-    echo "--- itubep-ctl не найден ($CTL) — пропускаю остановку сервисов ---"
+    printf {shlex.quote(m["ctl_missing"] + "\\n")} "$CTL"
 fi
 
-echo "--- Делаю резервную копию текущей версии ---"
-if ! mv "$OLD_ROOT" "$BACKUP_DIR"; then
-    echo "ОШИБКА: не удалось создать резервную копию ($OLD_ROOT -> $BACKUP_DIR)."
-    echo "Обновление остановлено, старая версия НЕ тронута."
-    read -rp "Нажмите Enter, чтобы закрыть это окно..." _
+echo {shlex.quote(m["backing_up"])}
+# ВАЖНО: это КОПИЯ, а не перемещение — OLD_ROOT остаётся на месте (по
+# тому же пути, на который уже ссылаются itubep-ctl и systemd-юниты) пока
+# идёт слияние ниже. Раньше здесь был mv, который на следующем шаге
+# заменялся новым деревом целиком — из-за этого всё, чего не было в
+# скачанном архиве обновления (пользовательские данные, .git и т.п.),
+# терялось. Теперь это не move+move, а copy-backup + merge-in-place.
+if ! cp -a "$OLD_ROOT" "$BACKUP_DIR"; then
+    printf {shlex.quote(m["backup_failed"] + "\\n")} "$OLD_ROOT" "$BACKUP_DIR"
+    echo {shlex.quote(m["backup_failed_note"])}
+    read -rp {shlex.quote(m["press_enter"])} _
     exit 1
 fi
 
-echo "--- Переношу новую версию на место старой ---"
-if ! mv "$NEW_ROOT" "$OLD_ROOT"; then
-    echo "ОШИБКА: не удалось перенести новую версию на место ($OLD_ROOT)."
-    echo "Откатываюсь на резервную копию..."
+echo {shlex.quote(m["moving_new"])}
+# cp -a "$NEW_ROOT"/. "$OLD_ROOT"/ — сливает содержимое новой версии
+# ПОВЕРХ старой: файлы, присутствующие в новой версии, перезаписываются;
+# новые файлы добавляются; а всё, чего в новой версии нет (venv, .git,
+# конфиги, i2psnark-данные, что угодно локальное), остаётся нетронутым —
+# это и есть merge, а не полная замена директории.
+if ! cp -a "$NEW_ROOT"/. "$OLD_ROOT"/; then
+    printf {shlex.quote(m["move_failed"] + "\\n")} "$OLD_ROOT"
+    echo {shlex.quote(m["rolling_back"])}
+    rm -rf "$OLD_ROOT"
     mv "$BACKUP_DIR" "$OLD_ROOT"
     [ -x "$CTL" ] && "$CTL" start-all
-    echo "Старая версия восстановлена и перезапущена."
-    read -rp "Нажмите Enter, чтобы закрыть это окно..." _
+    echo {shlex.quote(m["old_restored"])}
+    read -rp {shlex.quote(m["press_enter"])} _
     exit 1
 fi
 
-echo "--- Запускаю install.sh новой версии (может спросить пароль sudo) ---"
+echo {shlex.quote(m["running_install"])}
 echo ""
 if ( cd "$OLD_ROOT/bridge" && ./install.sh ); then
     echo ""
-    echo "=== Обновление установлено успешно ==="
-    rm -rf "$BACKUP_DIR"
-    echo "(резервная копия $BACKUP_DIR удалена)"
+    echo {shlex.quote(m["success"])}
+    rm -rf "$BACKUP_DIR" "$NEW_ROOT"
+    printf {shlex.quote(m["backup_removed"] + "\\n")} "$BACKUP_DIR"
 else
     echo ""
-    echo "=== install.sh завершился с ошибкой — откатываюсь на предыдущую версию ==="
+    echo {shlex.quote(m["install_failed"])}
     rm -rf "$OLD_ROOT"
     mv "$BACKUP_DIR" "$OLD_ROOT"
     if [ -x "$CTL" ]; then
         ( cd "$OLD_ROOT/bridge" && ./install.sh ) || true
         "$CTL" start-all
     fi
-    echo "Старая версия восстановлена и перезапущена. Ничего не потеряно."
-    echo "Сообщите об ошибке выше разработчику (это не должно происходить)."
+    echo {shlex.quote(m["old_restored_note"])}
+    echo {shlex.quote(m["report_bug"])}
 fi
 
 echo ""
-read -rp "Нажмите Enter, чтобы закрыть это окно..." _
+read -rp {shlex.quote(m["press_enter"])} _
 """
 
 
-def launch_update_installer(archive_path: Path, bridge_dir: Path) -> Path:
+def launch_update_installer(archive_path: Path, bridge_dir: Path, lang: str = "en") -> Path:
     """
     Точка входа из UI (settings_window.py). Синхронная (быстрая, чисто
     локальная) часть — распаковка архива и поиск нового bridge/ внутри
@@ -258,18 +338,25 @@ def launch_update_installer(archive_path: Path, bridge_dir: Path) -> Path:
 
     ctl_script = Path.home() / ".local" / "bin" / "itubep-ctl"
 
-    script = build_apply_script(new_repo_root, old_repo_root, ctl_script)
+    script = build_apply_script(new_repo_root, old_repo_root, ctl_script, lang=lang)
     script_path = work_dir / "apply_update.sh"
     script_path.write_text(script)
     script_path.chmod(0o755)
 
     terminal = find_terminal_emulator()
     if terminal is None:
+        if lang == "ru":
+            raise UpdateCheckError(
+                "Не нашёл ни одного эмулятора терминала (gnome-terminal/konsole/"
+                "xterm/...) в PATH, а install.sh может спросить пароль sudo — "
+                "это нужно делать в интерактивном терминале, не в фоне. "
+                f"Запустите вручную в своём терминале:\n  bash {script_path}"
+            )
         raise UpdateCheckError(
-            "Не нашёл ни одного эмулятора терминала (gnome-terminal/konsole/"
-            "xterm/...) в PATH, а install.sh может спросить пароль sudo — "
-            "это нужно делать в интерактивном терминале, не в фоне. "
-            f"Запустите вручную в своём терминале:\n  bash {script_path}"
+            "Could not find any terminal emulator (gnome-terminal/konsole/"
+            "xterm/...) in PATH, and install.sh may ask for a sudo password — "
+            "that needs an interactive terminal, not a background process. "
+            f"Run this manually in your own terminal:\n  bash {script_path}"
         )
 
     terminal_bin, terminal_args = terminal

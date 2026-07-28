@@ -414,7 +414,9 @@ def main():
 
         def worker():
             try:
-                script_path = update_installer.launch_update_installer(archive_path, bridge_dir)
+                script_path = update_installer.launch_update_installer(
+                    archive_path, bridge_dir, lang=get_language(storage)
+                )
                 root.after(0, lambda: _on_install_launched(script_path=script_path))
             except Exception as e:
                 root.after(0, lambda e=e: _on_install_launched(error=e))
