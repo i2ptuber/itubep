@@ -206,6 +206,28 @@ Both scripts work directly against the database (no HTTP, no tokens) — run the
 
 7. Trackers to help seeding start quickly — a list of announce URLs for live I2P BT trackers is set in the site's settings (`get_trackers`/`set_trackers`, stored in the database) and gets added to every published `.torrent`. Seeding still works without trackers (via i2psnark's DHT/PEX), but the first peer for a freshly published video takes noticeably longer to find.
 
+### Admin panel (moderation)
+
+`site/admin/` is a **separate** web app from the public site (`app/main.py`) — its own `uvicorn` process, its own port, sharing only the database and the moderation logic in `app/moderation_service.py` (the same functions used by `scripts/moderate.py`). It lets you browse/search videos and channels, remove content, and ban channels through a UI instead of the CLI.
+
+It has no login or password of its own — access control is simply "can you reach the port at all", so it **must never** be exposed to I2P or the public internet. Run it bound to loopback only, from `site/` with the same venv/environment variables as the main site:
+
+```bash
+cd itubep/site
+source venv/bin/activate
+python3 -m uvicorn admin.app:app --host 127.0.0.1 --port 8877
+```
+
+Reach it from your own machine over an SSH tunnel (never open the port itself, and never point an i2pd/nginx tunnel at it):
+
+```bash
+ssh -L 8877:127.0.0.1:8877 you@your-server
+```
+
+then open `http://127.0.0.1:8877` in your local browser.
+
+For a permanent setup, run it under the same kind of supervisor as the main site (see "Running the site on boot" above) — e.g. a second systemd unit, `itubep-admin.service`, identical to `itubep-site.service` but with `ExecStart=.../venv/bin/uvicorn admin.app:app --host 127.0.0.1 --port 8877` and no `Environment=ITUBEP_SITE_ORIGIN` needed (the admin app doesn't check it). Keep `--host 127.0.0.1` in the unit regardless — the app logs a startup warning if `UVICORN_HOST` is set to anything else, but that's a backstop, not a substitute for the correct flag.
+
 ## Project status
 
 Already working: channel registration, publishing videos from the bridge, seeding/downloading via `i2psnark`, watching through the in-browser HLS player with a fallback to downloading the `.torrent`.
