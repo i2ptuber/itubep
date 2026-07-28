@@ -59,6 +59,14 @@ class BridgePolicy:
             trackers=self.storage.get_trackers(),
             max_torrent_bytes=self.storage.get_max_video_torrent_bytes(),
             max_torrent_files=self.storage.get_max_video_torrent_files(),
+            # Раньше не передавались — SnarkIntegration/RPCClient всегда
+            # молча падали на хардкодный дефолт 127.0.0.1:8002, который
+            # верен только для режима i2pd (см. get_snark_rpc_url в
+            # storage.py). В режиме javai2p RPC-плагин смонтирован в
+            # консоли Java I2P роутера (обычно 7657), и без явной передачи
+            # этих URL мост не мог достучаться до i2psnark вообще.
+            rpc_url=self.storage.get_snark_rpc_url(),
+            web_url=self.storage.get_snark_web_url(),
         )
         # mode больше не хранится как простое поле — читается из БД при каждом
         # обращении, чтобы окно настроек (отдельный процесс) могло его менять

@@ -312,6 +312,57 @@ class PolicyStorage:
     def set_trackers(self, trackers: list[str]):
         self.set_setting("trackers", "\n".join(trackers))
 
+    def get_snark_rpc_url(self) -> str:
+        """
+        Адрес I2PSnark-RPC (Transmission-совместимый JSON-RPC), на который
+        мост шлёт все torrent-команды (см. snark/rpc_client.py).
+
+        КРИТИЧНО (было исправлено): раньше этот URL был захардкожен как
+        "http://127.0.0.1:8002/transmission/rpc" во всех вызывающих местах
+        (integration.py/authz.py), без учёта I2P_MODE. Порт 8002 —
+        порт ОТДЕЛЬНОГО standalone i2psnark-сервиса, который install.sh
+        разворачивает и слушает на 8002 ТОЛЬКО в режиме i2pd (см.
+        itubep-i2psnark.service). В режиме javai2p install.sh вместо этого
+        копирует RPC-плагин (transmission.war) в webapps/ уже работающего
+        Java I2P роутера — то есть плагин монтируется в Jetty консоли
+        роутера, обычно на порту 7657, а не 8002. Мост, всегда стучавшийся
+        на 8002, в javai2p-режиме получал ECONNREFUSED и не стартовал.
+
+        Порядок разрешения:
+          1. Переменная окружения ITUBEP_SNARK_RPC_URL — её пишет install.sh
+             в bridge.env (см. также systemd EnvironmentFile=), с портом,
+             реально соответствующим выбранному I2P_MODE. Имеет приоритет,
+             чтобы автоопределение при установке не расходилось с уже
+             сохранённым в БД значением от предыдущей (возможно, другой)
+             установки/режима.
+          2. Значение, сохранённое в settings (например, если пользователь
+             вручную поправил порт в окне настроек моста, см.
+             ui/settings_window.py).
+          3. Хардкодный дефолт 8002 — сохраняет прежнее поведение для
+             i2pd-режима и для тех, кто ставил мост до этого патча.
+        """
+        import os
+        env_value = os.environ.get("ITUBEP_SNARK_RPC_URL")
+        if env_value:
+            return env_value
+        return self.get_setting("snark_rpc_url", "http://127.0.0.1:8002/transmission/rpc")
+
+    def set_snark_rpc_url(self, url: str):
+        self.set_setting("snark_rpc_url", url)
+
+    def get_snark_web_url(self) -> str:
+        """Веб-интерфейс i2psnark (см. snark/web_client.py) — тот же самый
+        мод-зависимый порт, что и RPC (см. get_snark_rpc_url выше), просто
+        другой путь на том же хосте/порту."""
+        import os
+        env_value = os.environ.get("ITUBEP_SNARK_WEB_URL")
+        if env_value:
+            return env_value
+        return self.get_setting("snark_web_url", "http://127.0.0.1:8002/i2psnark/")
+
+    def set_snark_web_url(self, url: str):
+        self.set_setting("snark_web_url", url)
+
     def get_snark_storage_dir(self) -> str:
         import os
         # ВАЖНО: должно совпадать с тем, что реально создаёт install.sh —

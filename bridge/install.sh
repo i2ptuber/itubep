@@ -93,6 +93,8 @@ declare -A MSG_RU=(
     [i2cp_enable_manually]="Включите i2cp в настройках своего i2pd роутера и перезагрузите его."
     [i2pd_conf_not_found]="%s не найден — убедитесь вручную, что I2CP включён (i2cp.enabled=true) и роутер перезапущен."
     [javai2p_i2cp_ok]="Java I2P: I2CP включён по умолчанию, ничего настраивать не нужно."
+    [javai2p_console_port_guess]="Не удалось определить порт консоли Java I2P по router.config — использую дефолт %s. Если консоль слушает другой порт, поправьте его после установки в настройках моста."
+    [bridge_env_written]="Настройки подключения к i2psnark записаны в %s (RPC-порт: %s)."
 
     [step6]="6/9: Сборка i2psnark standalone + RPC из исходников"
     [already_built]="Уже собрано ранее — пропускаю (--rebuild форсирует пересборку)."
@@ -145,6 +147,7 @@ declare -A MSG_RU=(
     [logs_bridge_at]="  Логи моста:     %s"
     [logs_snark_at]="  Логи snark:     %s"
     [snark_webui]="  Веб-интерфейс snark: http://127.0.0.1:8002/i2psnark/"
+    [javai2p_snark_webui]="  Веб-интерфейс snark (в консоли Java I2P): http://127.0.0.1:%s/i2psnark/"
     [settings_cmd]="  Настройки/сопряжение: itubep-ctl settings"
     [pairings_cmd]="  Управление сопряжениями: itubep-ctl pairings"
     [first_run_note]="Первый запуск может занять пару минут, пока i2pd/I2P строит туннели — это нормально."
@@ -225,6 +228,8 @@ declare -A MSG_EN=(
     [i2cp_enable_manually]="Enable i2cp in your i2pd router's settings and restart it."
     [i2pd_conf_not_found]="%s not found — make sure manually that I2CP is enabled (i2cp.enabled=true) and the router has been restarted."
     [javai2p_i2cp_ok]="Java I2P: I2CP is enabled by default, nothing to configure."
+    [javai2p_console_port_guess]="Could not determine the Java I2P console port from router.config — using default %s. If your console listens on a different port, fix it after installation in the bridge settings."
+    [bridge_env_written]="i2psnark connection settings written to %s (RPC port: %s)."
 
     [step6]="6/9: Building i2psnark standalone + RPC from source"
     [already_built]="Already built earlier — skipping (--rebuild forces a rebuild)."
@@ -277,6 +282,7 @@ declare -A MSG_EN=(
     [logs_bridge_at]="  Bridge logs:    %s"
     [logs_snark_at]="  Snark logs:     %s"
     [snark_webui]="  Snark web UI: http://127.0.0.1:8002/i2psnark/"
+    [javai2p_snark_webui]="  Snark web UI (inside the Java I2P console): http://127.0.0.1:%s/i2psnark/"
     [settings_cmd]="  Settings/pairing: itubep-ctl settings"
     [pairings_cmd]="  Manage pairings: itubep-ctl pairings"
     [first_run_note]="The first run may take a couple of minutes while i2pd/I2P builds tunnels — that's normal."
@@ -474,7 +480,16 @@ pkg_is_installed() {
 }
 
 find_javai2p_webapps() {
-    for candidate in "${HOME}/.i2p/webapps" "/var/lib/i2p/.i2p/webapps" "/var/lib/i2p/i2p-config/webapps"; do
+    # /usr/share/i2p/webapps — where distro packages (e.g. Debian's i2p .deb)
+    # actually keep webapps/; it's root-owned, unlike the per-user ~/.i2p
+    # tree, so deploying there needs sudo (handled at the copy site below).
+    # Checked last since the per-user paths are more specific. /
+    # /usr/share/i2p/webapps — куда реально кладут webapps/ пакеты дистрибутива
+    # (например, Debian-пакет i2p); директория принадлежит root, в отличие от
+    # пользовательского ~/.i2p, поэтому копирование туда требует sudo
+    # (обрабатывается в месте копирования ниже). Проверяется последним, так
+    # как пользовательские пути более специфичны.
+    for candidate in "${HOME}/.i2p/webapps" "/var/lib/i2p/.i2p/webapps" "/var/lib/i2p/i2p-config/webapps" "/usr/share/i2p/webapps"; do
         [ -d "$candidate" ] && { echo "$candidate"; return 0; }
     done
     return 1
@@ -611,6 +626,88 @@ else
     echo "$(msg javai2p_i2cp_ok)"
 fi
 
+# ----------------------------------------------------------------------------
+# JAVA_I2P_CONSOLE_PORT — на каком порту слушает консоль Java I2P (Jetty), в
+# которую мы (см. шаг 7 ниже) кладём RPC-плагин как обычный webapp. В отличие
+# от i2pd-режима, где мы сами поднимаем отдельный i2psnark-сервис на заведомо
+# известном порту 8002, здесь плагин становится частью уже работающей
+# консоли роутера — и порт для него ровно тот, на котором слушает эта
+# консоль, а не какой-то не связанный с ней фиксированный дефолт.
+#
+# ВАЖНО: реализовано как функция, где КАЖДАЯ команда в конвейере явно
+# застрахована от ненулевого кода возврата (`|| true`). Без этого — то, что
+# было здесь раньше — под `set -euo pipefail` любой "не найдено"/SIGPIPE
+# от `head -n1`, закрывающего трубу раньше, чем `grep` дочитает файл до
+# конца, молча убивал ВЕСЬ install.sh на этом месте без единого сообщения
+# об ошибке (было найдено на реальном router.config — воспроизвести на
+# игрушечном тестовом файле не получилось, там grep физически не успевал
+# получить SIGPIPE). Присваивание переменной из упавшей команды/конвейера
+# вне if-условия — ровно тот случай, when `set -e` останавливает скрипт.
+#
+# Определяем по router.config (секции clientApp.N.*): находим N, у которого
+# RouterConsoleRunner (ключ может называться и classname=, и main=, в
+# зависимости от версии/сборки I2P — проверяем оба), и берём первое число
+# из args той же секции — это и есть порт (формат: "clientApp.N.args=7657
+# ::1,127.0.0.1 ./webapps/"). Не нашли (нестандартная конфигурация, консоль
+# отключена и т.п.) — берём 7657, дефолт из коробки, и явно предупреждаем,
+# чтобы пользователь при необходимости поправил порт вручную в настройках
+# моста (см. ui/settings_window.py).
+# ----------------------------------------------------------------------------
+detect_javai2p_console_port() {
+    local default_port="7657"
+    local router_config="" candidate
+
+    for candidate in "${HOME}/.i2p/router.config" "/var/lib/i2p/.i2p/router.config" "/var/lib/i2p/i2p-config/router.config"; do
+        if [ -f "$candidate" ]; then
+            router_config="$candidate"
+            break
+        fi
+    done
+    if [ -z "$router_config" ]; then
+        echo "${default_port}|guessed"
+        return 0
+    fi
+
+    local idx_line console_idx port_line port_value detected_port
+    idx_line="$(grep -E '^clientApp\.[0-9]+\.(classname|main)=net\.i2p\.router\.web\.RouterConsoleRunner' \
+        "$router_config" 2>/dev/null | head -n1)" || true
+    if [ -z "$idx_line" ]; then
+        echo "${default_port}|guessed"
+        return 0
+    fi
+
+    console_idx="$(printf '%s\n' "$idx_line" | sed -E 's/^clientApp\.([0-9]+)\..*/\1/')" || true
+    if [ -z "$console_idx" ]; then
+        echo "${default_port}|guessed"
+        return 0
+    fi
+
+    port_line="$(grep -E "^clientApp\.${console_idx}\.args=" "$router_config" 2>/dev/null | head -n1)" || true
+    # Отрезаем префикс "clientApp.N.args=" ДО извлечения цифр — иначе первое
+    # число в строке оказывается номером секции N (из самого префикса), а
+    # не портом (было найдено тестами: для "clientApp.4.args=7657 ..."
+    # первым числом в строке является "4", не "7657").
+    port_value="$(printf '%s\n' "$port_line" | sed -E "s/^clientApp\.${console_idx}\.args=//")" || true
+    detected_port="$(printf '%s\n' "$port_value" | grep -oE '^[0-9]+')" || true
+
+    if [ -n "$detected_port" ]; then
+        echo "${detected_port}|detected"
+    else
+        echo "${default_port}|guessed"
+    fi
+    return 0
+}
+
+JAVA_I2P_CONSOLE_PORT="7657"
+if [ "$I2P_MODE" = "javai2p" ]; then
+    _console_port_result="$(detect_javai2p_console_port)"
+    JAVA_I2P_CONSOLE_PORT="${_console_port_result%%|*}"
+    if [ "${_console_port_result##*|}" = "guessed" ]; then
+        warn "$(msg javai2p_console_port_guess "$JAVA_I2P_CONSOLE_PORT")"
+    fi
+fi
+
+
 # ============================================================================
 step "$(msg step6)"
 # ============================================================================
@@ -697,16 +794,73 @@ EOF
     fi
 else
     if [ -n "$JAVA_I2P_WEBAPPS" ]; then
-        cp "$TRANSMISSION_WAR" "${JAVA_I2P_WEBAPPS}/transmission.war"
+        # webapps/ is frequently root-owned (e.g. /usr/share/i2p/webapps from
+        # distro packages) even though the router itself runs as the current
+        # user — a plain cp fails silently... well, not silently (permission
+        # denied), but it fails, and the file just never lands where the
+        # router loads it from. `sudo cp` handles both the root-owned and
+        # user-owned (~/.i2p/webapps) cases. /
+        # webapps/ часто принадлежит root (например, /usr/share/i2p/webapps
+        # из пакетов дистрибутива), даже если сам роутер работает от текущего
+        # пользователя — обычный cp в этом случае падает с "permission
+        # denied", и файл просто не оказывается там, откуда его подхватывает
+        # роутер. `sudo cp` работает в обоих случаях — и для root-owned, и
+        # для пользовательского (~/.i2p/webapps).
+        sudo cp "$TRANSMISSION_WAR" "${JAVA_I2P_WEBAPPS}/transmission.war"
         echo "$(msg transmission_war_copied "$JAVA_I2P_WEBAPPS")"
         warn "$(msg javai2p_restart_needed)"
-        service_restart_best_effort i2p || warn "$(msg javai2p_service_not_found)"
+        # Java I2P is normally managed via the i2prouter wrapper script
+        # (installed by the i2p package / geti2p.net installer), NOT via
+        # systemd or a "i2p" init.d/service unit — service_restart_best_effort
+        # looks for exactly those and finds nothing on a typical desktop
+        # install, so it silently fails here and the old webapp keeps
+        # running until the user restarts the router by hand. Try i2prouter
+        # first; fall back to service_restart_best_effort for the (less
+        # common) case where I2P really is wired up as a system service. /
+        # Java I2P обычно управляется через скрипт-обёртку i2prouter
+        # (ставится пакетом i2p / инсталлятором с geti2p.net), а НЕ через
+        # systemd или юнит "i2p" init.d/service — service_restart_best_effort
+        # ищет именно их и на типичной desktop-установке ничего не находит,
+        # поэтому тихо проваливается, а старый webapp продолжает работать,
+        # пока пользователь не перезапустит роутер вручную. Сначала пробуем
+        # i2prouter; откат на service_restart_best_effort — на (менее частый)
+        # случай, когда I2P действительно оформлен как системный сервис.
+        if command -v i2prouter >/dev/null 2>&1; then
+            i2prouter restart
+        else
+            service_restart_best_effort i2p || warn "$(msg javai2p_service_not_found)"
+        fi
     else
         warn "$(msg javai2p_webapps_manual1)"
         warn "$(msg javai2p_webapps_manual2 "$TRANSMISSION_WAR")"
         warn "$(msg javai2p_webapps_manual3)"
     fi
 fi
+
+# ----------------------------------------------------------------------------
+# bridge.env — единственное место, где решается, на каком порту RPC-плагин
+# реально слушает: 8002 (наш собственный standalone i2psnark, режим i2pd)
+# или JAVA_I2P_CONSOLE_PORT (плагин смонтирован в уже работающую консоль
+# Java I2P, режим javai2p — см. блок определения порта выше). И ctl-скрипт
+# (start-bridge), и systemd-юнит (EnvironmentFile=) читают этот файл перед
+# запуском моста, поэтому storage.py:get_snark_rpc_url()/get_snark_web_url()
+# видят правильный URL без хардкода. Файл перезаписывается при каждом
+# запуске install.sh — так переустановка/смена I2P_MODE подхватывается
+# автоматически, а не требует ручной правки.
+# ----------------------------------------------------------------------------
+if [ "$I2P_MODE" = "i2pd" ]; then
+    SNARK_RPC_PORT="8002"
+else
+    SNARK_RPC_PORT="$JAVA_I2P_CONSOLE_PORT"
+fi
+BRIDGE_ENV_FILE="${WORKDIR}/bridge.env"
+cat > "$BRIDGE_ENV_FILE" << EOF
+# Generated by install.sh — do not edit by hand, re-run install.sh instead.
+# Автосгенерировано install.sh — не редактируйте вручную, перезапустите install.sh.
+ITUBEP_SNARK_RPC_URL=http://127.0.0.1:${SNARK_RPC_PORT}/transmission/rpc
+ITUBEP_SNARK_WEB_URL=http://127.0.0.1:${SNARK_RPC_PORT}/i2psnark/
+EOF
+echo "$(msg bridge_env_written "$BRIDGE_ENV_FILE" "$SNARK_RPC_PORT")"
 
 # ============================================================================
 step "$(msg step8)"
@@ -754,6 +908,7 @@ cat > "$CTL_SCRIPT" << EOF
 # ${CTL_GENERATED_BY}
 set -u
 
+WORKDIR="${WORKDIR}"
 RUN_STATE_DIR="${RUN_STATE_DIR}"
 LOG_DIR="${LOG_DIR}"
 BRIDGE_DIR="${BRIDGE_DIR}"
@@ -994,6 +1149,11 @@ _svc_status() {
 
 case "\${1:-}" in
     start-bridge)
+        # bridge.env содержит ITUBEP_SNARK_RPC_URL/ITUBEP_SNARK_WEB_URL,
+        # актуальные для выбранного при установке I2P_MODE (см. install.sh,
+        # шаг записи bridge.env) — без них storage.py откатывается на
+        # хардкодный дефолт 8002, верный только для режима i2pd.
+        [ -f "\${WORKDIR}/bridge.env" ] && { set -a; . "\${WORKDIR}/bridge.env"; set +a; }
         _svc_start "itubep-bridge.service" "${CTL_NAME_BRIDGE}" "\${RUN_STATE_DIR}/bridge.pid" "\${LOG_DIR}/bridge.log" "\$BRIDGE_DIR" "9080" "15" \\
             "\${VENV_DIR}/bin/python3" -m transport.http_server
         ;;
@@ -1122,6 +1282,10 @@ Wants=graphical-session.target
 Type=simple
 WorkingDirectory=${BRIDGE_DIR}
 Environment=PYTHONUNBUFFERED=1
+# "-" перед путём — файл необязателен (не валит юнит, если по какой-то
+# причине отсутствует); содержит ITUBEP_SNARK_RPC_URL/ITUBEP_SNARK_WEB_URL,
+# см. запись bridge.env в install.sh.
+EnvironmentFile=-${WORKDIR}/bridge.env
 ExecStart=${VENV_DIR}/bin/python3 -m transport.http_server
 Restart=on-failure
 RestartSec=5
@@ -1177,6 +1341,7 @@ else
     [ "$I2P_MODE" = "i2pd" ] && echo "$(msg logs_snark_at "${LOG_DIR}/snark.log")"
 fi
 [ "$I2P_MODE" = "i2pd" ] && echo "$(msg snark_webui)"
+[ "$I2P_MODE" = "javai2p" ] && echo "$(msg javai2p_snark_webui "$JAVA_I2P_CONSOLE_PORT")"
 echo "$(msg settings_cmd)"
 echo "$(msg pairings_cmd)"
 echo ""
