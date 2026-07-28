@@ -1,0 +1,167 @@
+name: Update release manifest (clearnet)
+
+# Срабатывает, когда публикуется GitHub Release (тэг вида vX.Y.Z).
+# Пересобирает СЕКЦИЮ artifacts.clearnet в updates/latest.json: version,
+# changelog_url и SHA256 для каждого артефакта релиза, лежащего в GitHub
+# Releases (по имени файла определяем платформу).
+#
+# ЭТОТ WORKFLOW НЕ ТРОГАЕТ artifacts.i2p. GitHub-раннеры не имеют доступа
+# к I2P (нет I2P-роутера/прокси, .i2p не резолвится) — публикация на
+# git.community.i2p и заполнение секции artifacts.i2p делается ОТДЕЛЬНЫМ
+# скриптом scripts/publish_i2p_release.py, вручную, с машины мейнтейнера,
+# у которой есть I2P-доступ. Обычный порядок действий при релизе:
+#   1) собрать артефакты, залить в GitHub Release -> сработает этот workflow
+#      и заполнит artifacts.clearnet;
+#   2) запустить scripts/publish_i2p_release.py локально -> заполнит
+#      artifacts.i2p и запушит обновлённый манифест.
+#
+# ВАЖНО: этот workflow ожидает, что артефакты релиза УЖЕ загружены к
+# моменту его срабатывания (то есть сборочный workflow, который создаёт
+# итоговые архивы/инсталляторы под Linux и Windows, должен завершиться
+# и приложить файлы к релизу ДО его публикации, либо этот workflow нужно
+# триггерить вручную/повторно после того как все артефакты на месте).
+#
+# Имена артефактов должны соответствовать шаблону:
+#   itubep-bridge-linux-vX.Y.Z.tar.gz
+#   itubep-bridge-windows-vX.Y.Z.exe
+# — при желании поменяйте паттерны ниже под реальные имена сборки.
+
+on:
+  release:
+    types: [published]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Тэг релиза, для которого пересобрать манифест (например v0.2.0)"
+        required: true
+
+permissions:
+  contents: write
+
+jobs:
+  update-manifest:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Determine tag
+        id: tag
+        run: |
+          if [ -n "${{ inputs.tag }}" ]; then
+            echo "tag=${{ inputs.tag }}" >> "$GITHUB_OUTPUT"
+          else
+            echo "tag=${{ github.event.release.tag_name }}" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Fetch release info via GitHub API
+        id: release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          gh api "repos/${{ github.repository }}/releases/tags/${TAG}" > release.json
+          VERSION="${TAG#v}"
+          echo "version=$VERSION" >> "$GITHUB_OUTPUT"
+
+      - name: Download artifacts and compute checksums
+        id: artifacts
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+        run: |
+          set -euo pipefail
+          mkdir -p /tmp/artifacts
+          python3 - <<'PYEOF'
+          import json, re, subprocess, sys
+
+          with open("release.json") as f:
+              release = json.load(f)
+
+          assets = release.get("assets", [])
+          patterns = {
+              "linux": re.compile(r"itubep-bridge-linux-v[\d.]+\.tar\.gz$"),
+              "windows": re.compile(r"itubep-bridge-windows-v[\d.]+\.exe$"),
+          }
+
+          found = {}
+          for asset in assets:
+              name = asset["name"]
+              url = asset["browser_download_url"]
+              for platform_key, pattern in patterns.items():
+                  if pattern.search(name):
+                      dest = f"/tmp/artifacts/{name}"
+                      subprocess.run(
+                          ["curl", "-sL", "-o", dest, url], check=True
+                      )
+                      sha256 = subprocess.run(
+                          ["sha256sum", dest], check=True, capture_output=True, text=True
+                      ).stdout.split()[0]
+                      found[platform_key] = {"url": url, "sha256": sha256}
+
+          missing = [p for p in patterns if p not in found]
+          if missing:
+              print(f"::warning::В релизе не найдены артефакты для: {missing} "
+                    f"(манифест обновится только для найденных платформ)")
+
+          with open("/tmp/artifacts_found.json", "w") as f:
+              json.dump(found, f)
+          PYEOF
+
+      - name: Write updates/latest.json
+        env:
+          VERSION: ${{ steps.release.outputs.version }}
+          TAG: ${{ steps.tag.outputs.tag }}
+        run: |
+          set -euo pipefail
+          python3 - <<'PYEOF'
+          import json, os
+
+          with open("release.json") as f:
+              release = json.load(f)
+          with open("/tmp/artifacts_found.json") as f:
+              clearnet_artifacts = json.load(f)
+
+          try:
+              with open("updates/latest.json") as f:
+                  old = json.load(f)
+          except FileNotFoundError:
+              old = {}
+
+          old_artifacts = old.get("artifacts", {})
+          old_clearnet = old_artifacts.get("clearnet", {})
+          # i2p-секция этим workflow'ом никогда не трогается — она заполняется
+          # только scripts/publish_i2p_release.py локально (см. комментарий
+          # в начале файла workflow: раннеры GitHub не имеют доступа к I2P).
+          old_i2p = old_artifacts.get("i2p", {})
+
+          # Если какие-то платформы не нашлись в этом релизе — сохраняем то,
+          # что уже было в старом манифесте, вместо того чтобы стереть
+          # рабочую ссылку на предыдущую версию для этой платформы.
+          for platform_key, data in old_clearnet.items():
+              clearnet_artifacts.setdefault(platform_key, data)
+
+          manifest = {
+              "version": os.environ["VERSION"],
+              "changelog_short": (release.get("body") or "")[:280],
+              "changelog_url": release["html_url"],
+              "min_supported_version": os.environ["VERSION"],
+              "artifacts": {
+                  "clearnet": clearnet_artifacts,
+                  "i2p": old_i2p,
+              },
+          }
+
+          with open("updates/latest.json", "w") as f:
+              json.dump(manifest, f, indent=2, ensure_ascii=False)
+              f.write("\n")
+          PYEOF
+
+      - name: Commit updated manifest
+        run: |
+          set -euo pipefail
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add updates/latest.json
+          git diff --cached --quiet && echo "Манифест не изменился" && exit 0
+          git commit -m "chore: update release manifest for ${{ steps.tag.outputs.tag }}"
+          git push origin HEAD:main

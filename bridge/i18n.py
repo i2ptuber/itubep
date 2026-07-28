@@ -121,6 +121,23 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.save_trackers": "Сохранить трекеры",
         "settings.restart_required": "Требуется перезапуск сервера моста, чтобы изменения применились",
         "settings.manage_pairings_btn": "Разрешённые сайты...",
+
+        "settings.update_heading": "Обновления",
+        "settings.update_current_version": "Текущая версия: %s",
+        "settings.update_channel_i2p": "Проверять через I2P",
+        "settings.update_channel_clearnet": "Проверять через обычный интернет",
+        "settings.update_check_btn": "Проверить обновления",
+        "settings.update_download_btn": "Скачать обновление",
+        "settings.update_checking": "Проверяю...",
+        "settings.update_downloading": "Скачиваю и проверяю контрольную сумму...",
+        "settings.update_up_to_date": "У вас установлена последняя версия.",
+        "settings.update_available": "Доступна версия %s.",
+        "settings.update_downloaded": (
+            "Скачано: %s\n"
+            "Запустите файл вручную, чтобы установить обновление."
+        ),
+        "settings.update_error": "Ошибка: %s",
+
         "settings.close": "Закрыть",
 
         # --- manage_pairings.py ---
@@ -278,6 +295,22 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.save_trackers": "Save trackers",
         "settings.restart_required": "Restarting the bridge server is required for changes to take effect",
         "settings.manage_pairings_btn": "Allowed sites...",
+
+        "settings.update_heading": "Updates",
+        "settings.update_current_version": "Current version: %s",
+        "settings.update_channel_i2p": "Check over I2P",
+        "settings.update_channel_clearnet": "Check over regular internet",
+        "settings.update_check_btn": "Check for updates",
+        "settings.update_download_btn": "Download update",
+        "settings.update_checking": "Checking...",
+        "settings.update_downloading": "Downloading and verifying checksum...",
+        "settings.update_up_to_date": "You have the latest version installed.",
+        "settings.update_available": "Version %s is available.",
+        "settings.update_downloaded": (
+            "Downloaded: %s\n"
+            "Run the file manually to install the update."
+        ),
+        "settings.update_error": "Error: %s",
         "settings.close": "Close",
 
         # --- manage_pairings.py ---

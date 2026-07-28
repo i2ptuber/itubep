@@ -1,0 +1,10 @@
+{
+  "version": "0.1.0",
+  "changelog_short": "Первая версия с поддержкой ручной проверки обновлений.",
+  "changelog_url": "https://github.com/i2ptuber/itubep/releases",
+  "min_supported_version": "0.1.0",
+  "artifacts": {
+    "clearnet": {},
+    "i2p": {}
+  }
+}

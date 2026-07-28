@@ -8,13 +8,18 @@ settings_window.py — standalone-окно настроек: язык, режи�
 from __future__ import annotations
 
 import sys
+import threading
 import tkinter as tk
-from tkinter import ttk
+import webbrowser
+from pathlib import Path
+from tkinter import messagebox, ttk
 
 sys.path.insert(0, ".")
 from policy.storage import PolicyStorage
 from ui.manage_pairings import ManagePairingsWindow
 from i18n import t, set_language, get_language
+import updater
+from __version__ import VERSION
 
 MODE_SILENT = "silent"
 MODE_CONFIRM = "confirm"
@@ -156,6 +161,117 @@ def main():
         ManagePairingsWindow(parent=root)
 
     ttk.Button(frame, text=t("settings.manage_pairings_btn"), command=open_manage_pairings).pack(anchor="w")
+
+    ttk.Separator(frame).pack(fill="x", pady=15)
+
+    # --- Обновления ---
+    # Только ручная проверка по кнопке, никакого автоматического скачивания
+    # или запуска — см. docstring updater.py. Канал (i2p/clearnet) выбирает
+    # сам пользователь: у этих двух путей разная модель приватности, решать
+    # молча за него не наше дело.
+    ttk.Label(frame, text=t("settings.update_heading"), font=("Sans", 11, "bold")).pack(anchor="w")
+    ttk.Label(
+        frame, text=t("settings.update_current_version") % VERSION,
+        font=("Sans", 9),
+    ).pack(anchor="w", pady=(2, 5))
+
+    update_channel_var = tk.StringVar(
+        value=storage.get_setting("update_channel", updater.DEFAULT_CHANNEL)
+    )
+
+    def on_update_channel_change():
+        storage.set_setting("update_channel", update_channel_var.get())
+
+    channel_row = ttk.Frame(frame)
+    channel_row.pack(anchor="w")
+    ttk.Radiobutton(
+        channel_row, text=t("settings.update_channel_i2p"),
+        variable=update_channel_var, value=updater.CHANNEL_I2P,
+        command=on_update_channel_change,
+    ).pack(side="left")
+    ttk.Radiobutton(
+        channel_row, text=t("settings.update_channel_clearnet"),
+        variable=update_channel_var, value=updater.CHANNEL_CLEARNET,
+        command=on_update_channel_change,
+    ).pack(side="left", padx=(15, 0))
+
+    update_status_var = tk.StringVar(value="")
+    update_status_label = ttk.Label(
+        frame, textvariable=update_status_var, font=("Sans", 9, "italic"),
+    )
+    update_status_label.pack(anchor="w", pady=(5, 0))
+
+    check_button = ttk.Button(frame, text=t("settings.update_check_btn"))
+    check_button.pack(anchor="w", pady=(5, 0))
+
+    download_button = ttk.Button(frame, text=t("settings.update_download_btn"))
+    # download_button.pack() вызывается только когда есть что скачивать —
+    # см. _on_check_done ниже.
+
+    _last_update_info = {"value": None}
+
+    def _on_check_done(info=None, error=None):
+        check_button.state(["!disabled"])
+        if error is not None:
+            update_status_var.set(t("settings.update_error") % str(error))
+            return
+        _last_update_info["value"] = info
+        if info.is_newer:
+            status = t("settings.update_available") % info.version
+            if info.changelog_short:
+                status += "\n" + info.changelog_short
+            update_status_var.set(status)
+            download_button.pack(anchor="w", pady=(5, 0))
+        else:
+            update_status_var.set(t("settings.update_up_to_date"))
+            download_button.pack_forget()
+
+    def on_check_updates():
+        check_button.state(["disabled"])
+        update_status_var.set(t("settings.update_checking"))
+        download_button.pack_forget()
+
+        def worker():
+            try:
+                info = updater.check_for_updates(storage, channel=update_channel_var.get())
+                root.after(0, lambda: _on_check_done(info=info))
+            except Exception as e:
+                root.after(0, lambda: _on_check_done(error=e))
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    check_button.configure(command=on_check_updates)
+
+    def on_download_update():
+        info = _last_update_info["value"]
+        if info is None:
+            return
+        download_button.state(["disabled"])
+        update_status_var.set(t("settings.update_downloading"))
+
+        def worker():
+            try:
+                dest_dir = Path.home() / "Downloads"
+                if not dest_dir.exists():
+                    dest_dir = Path.home()
+                path = updater.download_update(info, dest_dir, storage, channel=update_channel_var.get())
+                root.after(0, lambda: _on_download_done(path=path))
+            except Exception as e:
+                root.after(0, lambda: _on_download_done(error=e))
+
+        def _on_download_done(path=None, error=None):
+            download_button.state(["!disabled"])
+            if error is not None:
+                update_status_var.set(t("settings.update_error") % str(error))
+                messagebox.showerror(t("settings.update_heading"), str(error))
+                return
+            update_status_var.set(t("settings.update_downloaded") % str(path))
+            if info.changelog_url:
+                webbrowser.open(info.changelog_url)
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    download_button.configure(command=on_download_update)
 
     ttk.Button(frame, text=t("settings.close"), command=root.destroy).pack(pady=(15, 0))
 
