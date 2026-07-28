@@ -1,7 +1,5 @@
 # ITubeP
 
-> ⚠️ **Work in progress.** The project is under active development, breaking changes can happen at any time, and some functionality is rough or incomplete. Use at your own risk — bug reports and PRs are welcome.
-
 A YouTube-like service running on top of the [I2P](https://geti2p.net/) network, with no centralized video hosting — delivery happens over BitTorrent (via `i2psnark`), while the site only stores metadata (channels, video manifests, search index).
 
 ## Concept and architecture
