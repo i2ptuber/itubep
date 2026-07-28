@@ -12,8 +12,8 @@
     },
     "i2p": {
       "linux": {
-        "url": "http://git.community.i2p/tuber/itubep/releases/download/v0.1.5/itubep-bridge-linux-v0.1.5.tar.gz",
-        "sha256": "f70393d82cb39ccb565fc2e1ddf9d67b324508a5e2d47cf4ec286074468c499f"
+        "url": "http://git.community.i2p/tuber/itubep/releases/download/v0.2/itubep-bridge-linux-v0.2.tar.gz",
+        "sha256": "88429b66097f09c45b6f0647156af633cc714b4a17d8837e61edbd45ad081dfb"
       }
     }
   }
