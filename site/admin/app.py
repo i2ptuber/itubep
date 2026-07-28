@@ -21,6 +21,7 @@ from __future__ import annotations
 import math
 import os
 from pathlib import Path
+from urllib.parse import quote
 
 from fastapi import FastAPI, Request, Form, HTTPException
 from fastapi.responses import HTMLResponse, RedirectResponse
@@ -123,7 +124,7 @@ async def action_remove_video(
             await svc.remove_video(db, video_id, reason=reason)
         except svc.NotFound:
             raise HTTPException(404, "видео не найдено")
-    return RedirectResponse(url=f"/videos?q={q}&page={page}&status={status}", status_code=303)
+    return RedirectResponse(url=f"/videos?q={quote(q)}&page={page}&status={status}", status_code=303)
 
 
 @app.post("/videos/{video_id}/restore")
@@ -135,7 +136,7 @@ async def action_restore_video(
             await svc.restore_video(db, video_id)
         except svc.NotFound:
             raise HTTPException(404, "видео не найдено")
-    return RedirectResponse(url=f"/videos?q={q}&page={page}&status={status}", status_code=303)
+    return RedirectResponse(url=f"/videos?q={quote(q)}&page={page}&status={status}", status_code=303)
 
 
 @app.post("/videos/{video_id}/purge")
@@ -149,7 +150,7 @@ async def action_purge_video(
             await svc.purge_video(db, video_id)
         except svc.NotFound:
             raise HTTPException(404, "видео не найдено")
-    return RedirectResponse(url=f"/videos?q={q}&page={page}&status={status}", status_code=303)
+    return RedirectResponse(url=f"/videos?q={quote(q)}&page={page}&status={status}", status_code=303)
 
 
 @app.post("/channels/{channel_id}/ban")
@@ -161,7 +162,7 @@ async def action_ban_channel(
             await svc.ban_channel(db, channel_id, reason=reason)
         except svc.NotFound:
             raise HTTPException(404, "канал не найден")
-    return RedirectResponse(url=f"/channels?q={q}&page={page}&status={status}", status_code=303)
+    return RedirectResponse(url=f"/channels?q={quote(q)}&page={page}&status={status}", status_code=303)
 
 
 @app.post("/channels/{channel_id}/unban")
@@ -173,7 +174,7 @@ async def action_unban_channel(
             await svc.unban_channel(db, channel_id)
         except svc.NotFound:
             raise HTTPException(404, "канал не найден")
-    return RedirectResponse(url=f"/channels?q={q}&page={page}&status={status}", status_code=303)
+    return RedirectResponse(url=f"/channels?q={quote(q)}&page={page}&status={status}", status_code=303)
 
 
 @app.post("/channels/{channel_id}/purge")
@@ -188,4 +189,4 @@ async def action_purge_channel(
             await svc.purge_channel(db, channel_id)
         except svc.NotFound:
             raise HTTPException(404, "канал не найден")
-    return RedirectResponse(url=f"/channels?q={q}&page={page}&status={status}", status_code=303)
+    return RedirectResponse(url=f"/channels?q={quote(q)}&page={page}&status={status}", status_code=303)
