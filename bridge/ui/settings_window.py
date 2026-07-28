@@ -311,9 +311,9 @@ def main():
         def worker():
             try:
                 info = updater.check_for_updates(storage, channel=update_channel_var.get())
-                root.after(0, lambda: _on_check_done(info=info))
+                root.after(0, lambda info=info: _on_check_done(info=info))
             except Exception as e:
-                root.after(0, lambda: _on_check_done(error=e))
+                root.after(0, lambda e=e: _on_check_done(error=e))
 
         threading.Thread(target=worker, daemon=True).start()
 
@@ -332,9 +332,9 @@ def main():
                 if not dest_dir.exists():
                     dest_dir = Path.home()
                 path = updater.download_update(info, dest_dir, storage, channel=update_channel_var.get())
-                root.after(0, lambda: _on_download_done(path=path))
+                root.after(0, lambda path=path: _on_download_done(path=path))
             except Exception as e:
-                root.after(0, lambda: _on_download_done(error=e))
+                root.after(0, lambda e=e: _on_download_done(error=e))
 
         def _on_download_done(path=None, error=None):
             download_button.state(["!disabled"])
