@@ -8,4 +8,4 @@ __version__.py — версия моста itubep-bridge.
 к сайту, в логах и т.п.).
 """
 
-VERSION = "0.1.0"
+VERSION = "0.1.3"
