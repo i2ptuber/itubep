@@ -1,10 +1,15 @@
 {
   "version": "0.1.0",
-  "changelog_short": "Первая версия с поддержкой ручной проверки обновлений.",
-  "changelog_url": "https://github.com/i2ptuber/itubep/releases",
+  "changelog_short": "first release i guess",
+  "changelog_url": "https://github.com/i2ptuber/itubep/releases/tag/v0.1.0",
   "min_supported_version": "0.1.0",
   "artifacts": {
-    "clearnet": {},
+    "clearnet": {
+      "linux": {
+        "url": "https://github.com/i2ptuber/itubep/releases/download/v0.1.0/itubep-bridge-linux-v0.1.0.tar.gz",
+        "sha256": "75135a9f690225ad4af6347f2171e1692e051dd3b7cdc7aa756779302b4a0179"
+      }
+    },
     "i2p": {}
   }
 }
