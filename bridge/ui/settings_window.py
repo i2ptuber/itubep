@@ -19,6 +19,7 @@ from policy.storage import PolicyStorage
 from ui.manage_pairings import ManagePairingsWindow
 from i18n import t, set_language, get_language
 import updater
+import update_installer
 from __version__ import VERSION
 
 MODE_SILENT = "silent"
@@ -263,7 +264,9 @@ def main():
         # устаревшую (для другого канала) информацию видимой в UI.
         _last_update_info["value"] = None
         _last_update_info["channel"] = None
+        _last_downloaded_archive["path"] = None
         download_button.pack_forget()
+        install_button.pack_forget()
         update_status_var.set("")
 
     channel_row = ttk.Frame(frame)
@@ -292,10 +295,20 @@ def main():
     # download_button.pack() вызывается только когда есть что скачивать —
     # см. _on_check_done ниже.
 
+    install_button = ttk.Button(frame, text=t("settings.update_install_btn"))
+    # install_button.pack() вызывается только после успешного скачивания —
+    # см. _on_download_done ниже. Отдельная кнопка (а не автозапуск сразу
+    # после скачивания) — установка останавливает работающие сервисы и
+    # может спросить пароль sudo, это должно быть явным действием
+    # пользователя, а не следствием клика по "Скачать".
+
     _last_update_info = {"value": None, "channel": None}
+    _last_downloaded_archive = {"path": None}
 
     def _on_check_done(info=None, error=None, channel=None):
         check_button.state(["!disabled"])
+        install_button.pack_forget()
+        _last_downloaded_archive["path"] = None
         if error is not None:
             update_status_var.set(t("settings.update_error") % str(error))
             return
@@ -367,12 +380,62 @@ def main():
                 messagebox.showerror(t("settings.update_heading"), str(error))
                 return
             update_status_var.set(t("settings.update_downloaded") % str(path))
+            _last_downloaded_archive["path"] = path
+            install_button.pack(anchor="w", pady=(5, 0))
             if info.changelog_url:
                 webbrowser.open(info.changelog_url)
 
         threading.Thread(target=worker, daemon=True).start()
 
     download_button.configure(command=on_download_update)
+
+    def on_install_update():
+        archive_path = _last_downloaded_archive["path"]
+        if archive_path is None:
+            return
+        # Явное подтверждение: установка останавливает работающие сервисы
+        # моста/i2psnark и может спросить пароль sudo (см. install.sh) —
+        # ничего из этого не должно происходить без явного "да" от
+        # пользователя, даже если он уже нажал "Скачать" ранее.
+        if not messagebox.askyesno(
+            t("settings.update_heading"),
+            t("settings.update_install_confirm"),
+        ):
+            return
+
+        install_button.state(["disabled"])
+        update_status_var.set(t("settings.update_installing"))
+
+        # BRIDGE_DIR — папка, где реально лежит этот settings_window.py
+        # (bridge/ui/settings_window.py -> bridge/), а не CWD: скрипт может
+        # быть запущен и через полный путь из itubep-ctl, не обязательно
+        # из уже находящейся в bridge/ рабочей директории.
+        bridge_dir = Path(__file__).resolve().parent.parent
+
+        def worker():
+            try:
+                script_path = update_installer.launch_update_installer(archive_path, bridge_dir)
+                root.after(0, lambda: _on_install_launched(script_path=script_path))
+            except Exception as e:
+                root.after(0, lambda e=e: _on_install_launched(error=e))
+
+        def _on_install_launched(script_path=None, error=None):
+            install_button.state(["!disabled"])
+            if error is not None:
+                update_status_var.set(t("settings.update_error") % str(error))
+                messagebox.showerror(t("settings.update_heading"), str(error))
+                return
+            update_status_var.set(t("settings.update_install_launched"))
+            # Дальше мост, скорее всего, сам перезапустится (install.sh в
+            # конце поднимает сервисы заново) — это окно настроек тоже
+            # может быть убито вместе со старым процессом моста, закрываем
+            # его сами заранее, чтобы не остаться зомби-окном поверх уже
+            # перезапущенного моста.
+            root.destroy()
+
+        threading.Thread(target=worker, daemon=True).start()
+
+    install_button.configure(command=on_install_update)
 
     ttk.Button(frame, text=t("settings.close"), command=root.destroy).pack(pady=(15, 0))
 

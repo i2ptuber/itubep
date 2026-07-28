@@ -128,8 +128,21 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.update_channel_clearnet": "Проверять через обычный интернет",
         "settings.update_check_btn": "Проверить обновления",
         "settings.update_download_btn": "Скачать обновление",
+        "settings.update_install_btn": "Установить обновление",
         "settings.update_checking": "Проверяю...",
         "settings.update_downloading": "Скачиваю и проверяю контрольную сумму...",
+        "settings.update_installing": "Готовлю установку, открываю терминал...",
+        "settings.update_install_confirm": (
+            "Установка остановит мост и i2psnark, заменит файлы моста "
+            "новой версией и заново запустит install.sh — он может "
+            "спросить пароль sudo (для системных пакетов, если нужно). "
+            "Всё это будет видно и происходить в отдельном окне "
+            "терминала. Продолжить?"
+        ),
+        "settings.update_install_launched": (
+            "Установка запущена в отдельном окне терминала — следите за "
+            "процессом там. Это окно настроек сейчас закроется."
+        ),
         "settings.update_up_to_date": "У вас установлена последняя версия.",
         "settings.update_available": "Доступна версия %s.",
         "settings.update_downloaded": (
@@ -302,8 +315,21 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         "settings.update_channel_clearnet": "Check over regular internet",
         "settings.update_check_btn": "Check for updates",
         "settings.update_download_btn": "Download update",
+        "settings.update_install_btn": "Install update",
         "settings.update_checking": "Checking...",
         "settings.update_downloading": "Downloading and verifying checksum...",
+        "settings.update_installing": "Preparing installation, opening terminal...",
+        "settings.update_install_confirm": (
+            "Installing will stop the bridge and i2psnark, replace the "
+            "bridge files with the new version, and re-run install.sh — "
+            "it may ask for your sudo password (for system packages, if "
+            "needed). All of this will happen visibly in a separate "
+            "terminal window. Continue?"
+        ),
+        "settings.update_install_launched": (
+            "Installation started in a separate terminal window — watch "
+            "it there. This settings window will close now."
+        ),
         "settings.update_up_to_date": "You have the latest version installed.",
         "settings.update_available": "Version %s is available.",
         "settings.update_downloaded": (
