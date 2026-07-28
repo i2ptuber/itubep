@@ -10,6 +10,11 @@
         "sha256": "75135a9f690225ad4af6347f2171e1692e051dd3b7cdc7aa756779302b4a0179"
       }
     },
-    "i2p": {}
+    "i2p": {
+      "linux": {
+        "url": "http://git.community.i2p/api/repos/tuber/itubep/releases/1625837/assets/71",
+        "sha256": "75135a9f690225ad4af6347f2171e1692e051dd3b7cdc7aa756779302b4a0179"
+      }
+    }
   }
 }
