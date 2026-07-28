@@ -55,7 +55,7 @@ GITEA_BASE = "http://git.community.i2p"
 GITEA_OWNER = "tuber"
 GITEA_REPO = "itubep"
 
-DEFAULT_I2P_PROXY = "http://127.0.0.1:4444"
+DEFAULT_I2P_PROXY = "http://192.168.0.111:4444"
 
 ARTIFACT_NAME_PATTERN = "itubep-bridge-{platform}-{tag}{suffix}"
 

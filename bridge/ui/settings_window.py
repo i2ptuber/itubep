@@ -32,10 +32,87 @@ def main():
 
     root = tk.Tk()
     root.title(t("settings.window_title"))
-    root.resizable(False, False)
+    # Окну разрешаем ресайзиться (было resizable(False, False) — из-за
+    # этого при добавлении новых секций типа "Обновления" контент банально
+    # переставал влезать на экран, и достать до нижних кнопок было нечем).
+    # Дополнительно оборачиваем содержимое в Canvas+Scrollbar — так даже
+    # если контента больше, чем помещается по высоте на конкретном экране,
+    # до него всегда можно долистать колёсиком/скроллбаром, а не только
+    # руками менять размер окна.
+    root.resizable(True, True)
 
-    frame = ttk.Frame(root, padding=20)
-    frame.pack(fill="both", expand=True)
+    # Стартовая высота — с запасом под контент, но не выше экрана (на
+    # маленьких экранах/при мелком масштабировании ОС окно и так откроется
+    # ужатым по высоте экрана, а не будет вылезать за его пределы).
+    screen_height = root.winfo_screenheight()
+    initial_height = min(760, screen_height - 100)
+    root.geometry(f"520x{initial_height}")
+    root.minsize(420, 300)
+
+    container = ttk.Frame(root)
+    container.pack(fill="both", expand=True)
+
+    canvas = tk.Canvas(container, highlightthickness=0)
+    scrollbar = ttk.Scrollbar(container, orient="vertical", command=canvas.yview)
+    canvas.configure(yscrollcommand=scrollbar.set)
+    canvas.pack(side="left", fill="both", expand=True)
+    scrollbar.pack(side="right", fill="y")
+
+    frame = ttk.Frame(canvas, padding=20)
+    frame_window = canvas.create_window((0, 0), window=frame, anchor="nw")
+
+    def _on_frame_configure(event=None):
+        # Область прокрутки — весь фактический размер содержимого frame.
+        canvas.configure(scrollregion=canvas.bbox("all"))
+
+    def _on_canvas_configure(event):
+        # Растягиваем frame по ширине canvas, чтобы контент не оставался
+        # уже, чем видимая область, при ресайзе окна вбок.
+        canvas.itemconfig(frame_window, width=event.width)
+
+    frame.bind("<Configure>", _on_frame_configure)
+    canvas.bind("<Configure>", _on_canvas_configure)
+
+    def _on_mousewheel(event):
+        # event.delta: Windows/macOS — кратно 120; трактуем как есть.
+        canvas.yview_scroll(int(-1 * (event.delta / 120)), "units")
+
+    def _on_scroll_up(event):
+        canvas.yview_scroll(-1, "units")
+
+    def _on_scroll_down(event):
+        canvas.yview_scroll(1, "units")
+
+    def _bind_mousewheel(event):
+        # Привязываем колесо мыши только пока курсор над этим окном —
+        # bind_all("<MouseWheel>") без ограничения по времени жизни мог бы
+        # тихо перехватывать скролл и в других открытых окнах приложения
+        # (например ManagePairingsWindow), если они окажутся под курсором
+        # позже. Отвязываем в _unbind_mousewheel при уходе курсора.
+        canvas.bind_all("<MouseWheel>", _on_mousewheel)   # Windows/macOS
+        canvas.bind_all("<Button-4>", _on_scroll_up)       # Linux, колесо вверх
+        canvas.bind_all("<Button-5>", _on_scroll_down)     # Linux, колесо вниз
+
+    def _unbind_mousewheel(event):
+        canvas.unbind_all("<MouseWheel>")
+        canvas.unbind_all("<Button-4>")
+        canvas.unbind_all("<Button-5>")
+
+    canvas.bind("<Enter>", _bind_mousewheel)
+    canvas.bind("<Leave>", _unbind_mousewheel)
+
+    def _on_window_destroy(event):
+        # Подстраховка: если окно закрывается, пока курсор ещё "внутри"
+        # canvas (значит _bind_mousewheel уже сработал), обычный <Leave>
+        # может не успеть вызваться — тогда bind_all("<MouseWheel>"/...)
+        # остались бы висеть на уровне интерпретатора и ссылаться на уже
+        # уничтоженный canvas, ломая скролл в других открытых окнах моста
+        # (например ManagePairingsWindow — тот же Tk-интерпретатор, см.
+        # tk.Toplevel(parent) в manage_pairings.py).
+        if event.widget is root:
+            _unbind_mousewheel(event)
+
+    root.bind("<Destroy>", _on_window_destroy)
 
     # --- Язык интерфейса моста (независим от языка сайта) ---
     ttk.Label(frame, text=t("settings.language_heading"), font=("Sans", 11, "bold")).pack(anchor="w")
