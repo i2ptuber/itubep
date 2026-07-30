@@ -1,13 +1,17 @@
 {
-  "version": "0.2",
-  "changelog_short": "please work 🙏",
-  "changelog_url": "https://github.com/i2ptuber/itubep/releases/tag/v0.2",
-  "min_supported_version": "0.2",
+  "version": "0.5",
+  "changelog_short": "Added windows support.\r\nDownload i2psnark-bundle if you're using i2pd, and do not if you're using java i2p.",
+  "changelog_url": "https://github.com/i2ptuber/itubep/releases/tag/v0.5",
+  "min_supported_version": "0.5",
   "artifacts": {
     "clearnet": {
       "linux": {
-        "url": "https://github.com/i2ptuber/itubep/releases/download/v0.2/itubep-bridge-linux-v0.2.tar.gz",
-        "sha256": "88429b66097f09c45b6f0647156af633cc714b4a17d8837e61edbd45ad081dfb"
+        "url": "https://github.com/i2ptuber/itubep/releases/download/v0.5/itubep-bridge-linux-v0.5.tar.gz",
+        "sha256": "c05e6c297b3e9ded30a134ac2559cf6f687bd92e90b3dd78f75e266fea215b2e"
+      },
+      "windows": {
+        "url": "https://github.com/i2ptuber/itubep/releases/download/v0.5/itubep-bridge-windows-v0.5.exe",
+        "sha256": "583608692b02bc9b363d840f3436c7fb72fef70a612bfbe91cb75089b54fa53c"
       }
     },
     "i2p": {
