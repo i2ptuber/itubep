@@ -272,6 +272,15 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         # --- http_server.py ---
         "server.resuming_torrents": "Возобновляю раздачу ранее добавленных торрентов...",
         "server.resuming_done": "Готово.",
+
+        # --- authz.py (описания действий для окна подтверждения в режиме confirm) ---
+        "confirm.add_video": "добавить видео {video_id}",
+        "confirm.delete_torrent": "удалить торрент {torrent_id}",
+        "confirm.update_channel_studio": "обновить студию канала",
+        "confirm.change_video_thumbnail": "сменить превью видео",
+        "confirm.edit_video_details": "изменить сведения о видео {video_id}",
+        "confirm.vote_video": "проголосовать за видео {video_id}",
+        "confirm.publish_comment": "опубликовать комментарий",
     },
     "en": {
         # --- settings_window.py ---
@@ -458,5 +467,14 @@ _TRANSLATIONS: dict[str, dict[str, str]] = {
         # --- http_server.py ---
         "server.resuming_torrents": "Resuming previously added torrents...",
         "server.resuming_done": "Done.",
+
+        # --- authz.py (action descriptions for the confirm-mode dialog) ---
+        "confirm.add_video": "add video {video_id}",
+        "confirm.delete_torrent": "delete torrent {torrent_id}",
+        "confirm.update_channel_studio": "update channel studio",
+        "confirm.change_video_thumbnail": "change video thumbnail",
+        "confirm.edit_video_details": "edit video {video_id} details",
+        "confirm.vote_video": "vote on video {video_id}",
+        "confirm.publish_comment": "publish a comment",
     },
 }

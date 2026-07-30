@@ -51,16 +51,23 @@ async function getOrCreateToken(forceNewPairing = false) {
     return data.token;
 }
 
-// Обёртка над fetch для всех запросов с Bearer-токеном: если мост отвечает
-// 401/403 — токен отозван (или изначально невалиден), выбрасывает
-// BridgeTokenRevokedError вместо обычной ошибки, чтобы вызывающий код мог
-// среагировать переустановкой сопряжения, а не просто показать "не удалось".
+// Обёртка над fetch для всех запросов с Bearer-токеном: 401 — токен
+// невалиден/отозван (см. AuthenticationFailed в bridge/policy/authz.py),
+// выбрасывает BridgeTokenRevokedError, чтобы вызывающий код среагировал
+// переустановкой сопряжения. 403 — это НЕ проблема токена: конкретное
+// действие отклонено (например, пользователь нажал "Отклонить" на
+// диалоге подтверждения в confirm-режиме моста) — токен по-прежнему
+// валиден, повторное сопряжение тут не нужно и не должно запускаться
+// (раньше 403 обрабатывался так же, как 401, — из-за этого простой отказ
+// на ОДНОМ действии выглядел как "сопряжение сломалось", и сайт тихо
+// перезапускал весь pairing-флоу с prompt() за кодом, который легко не
+// заметить).
 async function bridgeFetchAuthed(url, options, token) {
     const resp = await fetch(url, {
         ...options,
         headers: { ...(options.headers || {}), "Authorization": `Bearer ${token}` },
     });
-    if (resp.status === 401 || resp.status === 403) {
+    if (resp.status === 401) {
         localStorage.removeItem(TOKEN_STORAGE_KEY);
         throw new BridgeTokenRevokedError(window.t("player.error_token_revoked"));
     }

@@ -56,7 +56,10 @@ async function menuBridgeFetchAuthed(url, options, token) {
         ...options,
         headers: { ...(options.headers || {}), "Authorization": `Bearer ${token}` },
     });
-    if (resp.status === 401 || resp.status === 403) {
+    // См. комментарий у bridgeFetchAuthed в player.js — только 401 значит
+    // "токен невалиден/отозван", 403 значит "конкретное действие отклонено",
+    // это разные вещи, и только на 401 имеет смысл сбрасывать токен.
+    if (resp.status === 401) {
         localStorage.removeItem(MENU_TOKEN_STORAGE_KEY);
     }
     return resp;

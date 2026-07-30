@@ -13,7 +13,7 @@ import asyncio
 
 from aiohttp import web
 
-from policy.authz import BridgePolicy, PermissionDenied
+from policy.authz import BridgePolicy, PermissionDenied, AuthenticationFailed
 from policy.origin_validation import is_valid_pairing_origin
 from i18n import t
 
@@ -62,6 +62,15 @@ async def cors_middleware(request: web.Request, handler):
 
     try:
         response = await handler(request)
+    except AuthenticationFailed as e:
+        # 401, а не 403 — это единственный сигнал, по которому клиент
+        # (site/static/*.js) стирает сохранённый токен и запускает новое
+        # сопряжение. Если бы это тоже маппилось в 403 (как раньше — до
+        # разделения PermissionDenied/AuthenticationFailed), простое
+        # "Отклонить" на confirm-диалоге ("действие отклонено", тоже 403)
+        # выглядело бы для клиента неотличимо от "токен отозван" — сайт
+        # без всякой нужды перезапускал пейринг на каждый обычный отказ.
+        response = web.json_response({"error": str(e)}, status=401)
     except PermissionDenied as e:
         response = web.json_response({"error": str(e)}, status=403)
     except web.HTTPException:

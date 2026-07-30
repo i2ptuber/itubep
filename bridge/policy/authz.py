@@ -12,6 +12,7 @@ import time
 from enum import Enum
 from pathlib import Path
 
+from i18n import t
 from snark import SnarkIntegration, VideoTorrentHandle
 from snark.torrent_builder import UntrustedTorrentError
 
@@ -28,6 +29,21 @@ class Mode(Enum):
 
 
 class PermissionDenied(Exception):
+    """Действие отклонено — НЕ обязательно проблема с самим токеном/
+    сопряжением (см. AuthenticationFailed ниже для этого случая). Сюда
+    попадает: пользователь отклонил конкретное действие в confirm-режиме,
+    ownership-мисматч, сайт отверг что-то на своей стороне и т.п. — во
+    всех этих случаях токен по-прежнему валиден, повторная авторизация
+    не нужна."""
+    pass
+
+
+class AuthenticationFailed(PermissionDenied):
+    """Именно проблема с токеном/сопряжением — невалидный/отозванный
+    токен, заблокированный origin. Единственный случай, когда клиенту
+    имеет смысл стирать сохранённый токен и заново запускать сопряжение
+    (см. transport/http_server.py — маппится в HTTP 401, а не 403, и
+    site/static/*.js — клиент перезапускает пейринг только на 401)."""
     pass
 
 
@@ -122,9 +138,9 @@ class BridgePolicy:
     def _authenticate(self, token: str) -> str:
         origin = self.storage.get_origin_for_token(token)
         if origin is None:
-            raise PermissionDenied("Невалидный или отозванный токен")
+            raise AuthenticationFailed("Невалидный или отозванный токен")
         if self.storage.is_blocked(origin):
-            raise PermissionDenied("Origin в блеклисте")
+            raise AuthenticationFailed("Origin в блеклисте")
         return origin
 
     def _confirm_if_needed(self, origin: str, description: str):
@@ -171,7 +187,7 @@ class BridgePolicy:
                 self._handles[existing_torrent_id] = handle
                 return handle
 
-        self._confirm_if_needed(origin, f"добавить видео {video_id}")
+        self._confirm_if_needed(origin, t("confirm.add_video", video_id=video_id))
 
         try:
             handle = self.snark.add_video_for_playback(torrent_bytes, expected_torrent_name)
@@ -235,7 +251,7 @@ class BridgePolicy:
     def remove_torrent(self, token: str, torrent_id: int, delete_local_data: bool = False) -> None:
         origin = self._authenticate(token)
         self._check_ownership(origin, torrent_id)
-        self._confirm_if_needed(origin, f"удалить торрент {torrent_id}")
+        self._confirm_if_needed(origin, t("confirm.delete_torrent", torrent_id=torrent_id))
 
         self.snark.remove_video(torrent_id, delete_local_data)
         self.storage.unregister_torrent(torrent_id)
@@ -478,7 +494,7 @@ class BridgePolicy:
         from snark.publisher import _requests_session_for, I2P_REQUEST_TIMEOUT_SECONDS, PublishError
 
         origin = self._authenticate(token)
-        self._confirm_if_needed(origin, "обновить студию канала")
+        self._confirm_if_needed(origin, t("confirm.update_channel_studio"))
 
         channel = self._channel_identity
         if channel is None:
@@ -577,7 +593,7 @@ class BridgePolicy:
         from snark.thumbnail import compress_thumbnail, ThumbnailError
 
         origin = self._authenticate(token)
-        self._confirm_if_needed(origin, "сменить превью видео")
+        self._confirm_if_needed(origin, t("confirm.change_video_thumbnail"))
 
         channel = self._channel_identity
         if channel is None:
@@ -644,7 +660,7 @@ class BridgePolicy:
             raise PermissionDenied(f"Некорректный уровень доступа: {access_level}")
 
         origin = self._authenticate(token)
-        self._confirm_if_needed(origin, f"изменить сведения о видео {video_id}")
+        self._confirm_if_needed(origin, t("confirm.edit_video_details", video_id=video_id))
 
         channel = self._channel_identity
         if channel is None:
@@ -688,7 +704,7 @@ class BridgePolicy:
             raise PermissionDenied("Некорректное значение голоса")
 
         origin = self._authenticate(token)
-        self._confirm_if_needed(origin, f"проголосовать за видео {video_id}")
+        self._confirm_if_needed(origin, t("confirm.vote_video", video_id=video_id))
 
         channel = self._channel_identity
         if channel is None:
@@ -744,7 +760,7 @@ class BridgePolicy:
         from snark.publisher import _requests_session_for, I2P_REQUEST_TIMEOUT_SECONDS
 
         origin = self._authenticate(token)
-        self._confirm_if_needed(origin, "опубликовать комментарий")
+        self._confirm_if_needed(origin, t("confirm.publish_comment"))
 
         channel = self._channel_identity
         if channel is None:

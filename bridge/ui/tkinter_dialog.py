@@ -32,6 +32,17 @@ class TkinterPairingDialog:
         """
         return call_in_gui_thread(lambda: self._show_brute_force_warning_impl(origin, attempt_count))
 
+    # Если диалог оставить открытым и не ответить — единственный GUI-поток
+    # (см. gui_thread.py: одна очередь, один worker) намертво зависает
+    # внутри root.mainloop() этого окна, и ВСЕ следующие диалоги (новое
+    # сопряжение, подтверждение других действий и т.д.) молча встают в
+    # очередь и никогда не показываются — мост выглядит как зависший.
+    # root.after(...) планирует автозакрытие ВНУТРИ того же tkinter-цикла
+    # (не отдельным потоком — трогать tkinter не из его потока нельзя),
+    # так что оно безопасно освобождает worker, даже если пользователь
+    # никогда не вернётся к этому окну.
+    DIALOG_TIMEOUT_MS = 180_000  # 3 минуты
+
     def _show_brute_force_warning_impl(self, origin: str, attempt_count: int) -> bool:
         result = {"block": False}
 
@@ -75,6 +86,7 @@ class TkinterPairingDialog:
         ttk.Button(btn_frame, text=t("dialog.add_to_blocklist"), command=on_block).pack(side="right")
 
         root.protocol("WM_DELETE_WINDOW", on_ignore)
+        root.after(self.DIALOG_TIMEOUT_MS, on_ignore)
 
         root.update_idletasks()
         w, h = root.winfo_reqwidth(), root.winfo_reqheight()
@@ -159,6 +171,7 @@ class TkinterPairingDialog:
         approve_btn.pack(side="right")
 
         root.protocol("WM_DELETE_WINDOW", on_deny)
+        root.after(self.DIALOG_TIMEOUT_MS, on_deny)
 
         root.update_idletasks()
         w, h = root.winfo_reqwidth(), root.winfo_reqheight()

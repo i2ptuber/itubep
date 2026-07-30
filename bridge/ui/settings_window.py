@@ -7,6 +7,7 @@ settings_window.py — standalone-окно настроек: язык, режи�
 
 from __future__ import annotations
 
+import platform
 import sys
 import threading
 import tkinter as tk
@@ -19,8 +20,17 @@ from policy.storage import PolicyStorage
 from ui.manage_pairings import ManagePairingsWindow
 from i18n import t, set_language, get_language
 import updater
-import update_installer
 from __version__ import VERSION
+
+# update_installer (Linux, накатывает .tar.gz поверх install.sh) и
+# win.update_apply (Windows, запускает скачанный itubep-bridge-windows-*.exe
+# через UAC) — платформозависимые реализации одного шага: "установить уже
+# скачанное и проверенное по SHA256 обновление" (см. on_install_update ниже).
+IS_WINDOWS = platform.system().lower() == "windows"
+if IS_WINDOWS:
+    from win import update_apply as update_installer_platform
+else:
+    import update_installer as update_installer_platform
 
 MODE_SILENT = "silent"
 MODE_CONFIRM = "confirm"
@@ -414,10 +424,19 @@ def main():
 
         def worker():
             try:
-                script_path = update_installer.launch_update_installer(
-                    archive_path, bridge_dir, lang=get_language(storage)
-                )
-                root.after(0, lambda: _on_install_launched(script_path=script_path))
+                if IS_WINDOWS:
+                    # Windows: скачанный файл — это сам итоговый установщик
+                    # (itubep-bridge-windows-vX.X.X.exe), просто запускаем
+                    # его с UAC-повышением; script_path здесь не применим.
+                    update_installer_platform.launch_update_installer_windows(
+                        archive_path, lang=get_language(storage)
+                    )
+                    root.after(0, lambda: _on_install_launched(script_path=archive_path))
+                else:
+                    script_path = update_installer_platform.launch_update_installer(
+                        archive_path, bridge_dir, lang=get_language(storage)
+                    )
+                    root.after(0, lambda: _on_install_launched(script_path=script_path))
             except Exception as e:
                 root.after(0, lambda e=e: _on_install_launched(error=e))
 
